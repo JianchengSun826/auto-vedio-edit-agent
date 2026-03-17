@@ -1,0 +1,26 @@
+services:
+  valkey:
+    image: valkey/valkey:7
+    ports:
+      - "6379:6379"
+    volumes:
+      - valkey_data:/data
+    command: valkey-server --appendonly yes
+
+  worker:
+    build: .
+    command: celery -A tasks.celery_app worker --loglevel=info --concurrency=2
+    depends_on:
+      - valkey
+    environment:
+      - CELERY_BROKER_URL=redis://valkey:6379/0
+      - CELERY_RESULT_BACKEND=redis://valkey:6379/0
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+      - ./tmp:/app/tmp
+
+volumes:
+  valkey_data:
