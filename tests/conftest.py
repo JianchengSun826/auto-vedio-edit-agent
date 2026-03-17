@@ -1,5 +1,4 @@
 # tests/conftest.py
-import os
 import pytest
 
 @pytest.fixture(autouse=True)
