@@ -129,4 +129,4 @@ with gr.Blocks(title="视频自动剪辑 Agent") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(server_name="0.0.0.0")
