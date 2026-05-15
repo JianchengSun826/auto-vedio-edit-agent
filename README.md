@@ -36,6 +36,29 @@ AI 提案，人工决定。粗剪候选列表以表格形式呈现，剪辑师�
 
 通过 `USER_PREFERENCES.md` 文件记录剪辑师的工作习惯（默认留白时长、最短片段阈值、常用关键词、目标受众描述等），AI 在解析每条指令时自动参考，无需每次重复说明背景。
 
+### 多说话人识别与按人提取
+
+系统使用 WhisperX 完成转录后，自动调用 pyannote 对音轨做说话人分离，输出带说话人标签的逐句字幕：
+
+```
+[12.3s – 18.5s] SPEAKER_00: 我们这款产品比竞品便宜 30%
+[19.1s – 24.8s] SPEAKER_01: 那在续航方面呢？
+[25.0s – 31.2s] SPEAKER_00: 续航实测是同类最长的
+```
+
+剪辑师可直接按说话人过滤片段，无需逐字对照时间线：
+
+```
+提取 SPEAKER_00 所有关于产品价格的回答
+只保留记者的提问部分（SPEAKER_01）
+```
+
+模型本地运行，素材不经过任何外部服务。需配置 HuggingFace Token（一次性免费申请）。未配置时自动降级为无说话人标签模式，其余功能不受影响。
+
+### 个人剪辑偏好持久化
+
+通过 `USER_PREFERENCES.md` 文件记录剪辑师的工作习惯（默认留白时长、最短片段阈值、常用关键词、目标受众描述等），AI 在解析每条指令时自动参考，无需每次重复说明背景。
+
 ### 批量处理
 
 提供 Python API，可对整个素材目录循环处理，适合同一事件多机位素材的统一整理或日常归档流程集成。
@@ -47,6 +70,8 @@ AI 提案，人工决定。粗剪候选列表以表格形式呈现，剪辑师�
 - [快速开始](#快速开始)
 - [安装步骤](#安装步骤)
 - [API Key 配置](#api-key-配置)
+  - [Anthropic API Key](#anthropic-api-key)
+  - [HuggingFace Token（说话人分离）](#huggingface-token说话人分离)
 - [个人剪辑偏好配置](#个人剪辑偏好配置)
 - [界面使用流程](#界面使用流程)
 - [功能详解](#功能详解)
@@ -144,38 +169,61 @@ setup.bat
 
 ## API Key 配置
 
-API Key 统一存放在项目根目录的 **`api_keys.env`** 文件，这是唯一需要填写的配置文件。
+所有密钥统一存放在项目根目录的 **`api_keys.env`** 文件，这是唯一需要填写的配置文件。
 
 ```
 auto-vedio-edit-agent/
-├── api_keys.env        ← 在这里填写 API Key
+├── api_keys.env        ← 在这里填写所有密钥
 └── ...
 ```
 
-**`api_keys.env` 文件内容：**
+> **安全提示**：`api_keys.env` 已被 `.gitignore` 排除，不会意外上传到代码仓库。
 
-```dotenv
-# ============================================================
-# API 密钥配置 — 这里是唯一需要填写的地方
-# 修改后运行 ./start.sh 重启服务生效
-# ============================================================
+---
 
-# Anthropic API Key（必填）
-# 获取地址：https://console.anthropic.com → API Keys → Create Key
-ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxx
-```
+### Anthropic API Key
 
-**如何获取 Anthropic API Key：**
+用于 AI 意图解析（必填）。
+
+**获取步骤：**
 
 1. 访问 [console.anthropic.com](https://console.anthropic.com)
 2. 注册或登录账号
-3. 进入 **API Keys** 页面
-4. 点击 **Create Key**，复制生成的 Key
-5. 将 Key 粘贴到 `api_keys.env` 中 `ANTHROPIC_API_KEY=` 后面
+3. 进入 **API Keys** 页面，点击 **Create Key**，复制生成的 Key
+4. 填入 `api_keys.env`：
 
-> **安全提示**：`api_keys.env` 已被 `.gitignore` 排除，不会意外上传到代码仓库。
+```dotenv
+ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxx
+```
 
-**更换 API Key：** 直接编辑 `api_keys.env`，保存后运行 `./start.sh` 重启服务。
+---
+
+### HuggingFace Token（说话人分离）
+
+用于下载 pyannote 说话人分离模型（可选，不填则跳过说话人识别）。
+
+**获取步骤：**
+
+1. 注册 [huggingface.co](https://huggingface.co) 账号（免费）
+2. 进入 [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)，点击 **New token**，权限选 **Read**，复制 Token
+3. 访问以下两个页面，分别点击 **Agree and access repository** 接受模型授权：
+   - [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
+   - [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0)
+4. 填入 `api_keys.env`：
+
+```dotenv
+HF_TOKEN=hf_xxxxxxxxxxxxxxxx
+```
+
+> **首次启动说明**：填入 HF_TOKEN 后第一次启动时，系统会自动下载 pyannote 模型（约 1.5 GB），完成后后续启动无需重新下载。
+
+**不需要说话人分离时**，`HF_TOKEN` 留空即可，转录功能完整可用：
+
+```dotenv
+HF_TOKEN=
+```
+
+**更换或更新密钥：** 直接编辑 `api_keys.env`，保存后运行 `./start.sh` 重启服务。
 
 ---
 

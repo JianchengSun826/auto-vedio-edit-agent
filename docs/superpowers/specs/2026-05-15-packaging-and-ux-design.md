@@ -1,4 +1,4 @@
-# 设计文档：打包与用户体验改进
+# 设计文档：打包、用户体验改进与说话人分离
 
 **日期**：2026-05-15  
 **状态**：待实现
@@ -7,7 +7,9 @@
 
 ## 目标
 
-让无编程经验的用户能在任何平台（macOS / Windows / Linux）通过 Docker 一键安装并使用本项目，同时将 API Key 和用户剪辑偏好分离到独立的、易于修改的文件中。
+1. 让无编程经验的用户能在任何平台（macOS / Windows / Linux）通过 Docker 一键安装并使用
+2. 将 API Key 和用户剪辑偏好分离到独立的、易于修改的文件中
+3. 集成 WhisperX 实现多说话人识别，支持按说话人过滤提取片段
 
 ---
 
@@ -20,6 +22,8 @@
 | 非敏感配置 | 混在 `.env` 里 | 独立 `docker.env` 文件 |
 | 用户偏好 | 无 | `USER_PREFERENCES.md`，注入 LLM 提示词 |
 | 安装引导 | 无 | `setup.sh` / `setup.bat` 交互式向导 |
+| 转录引擎 | faster-whisper（无说话人区分） | WhisperX（转录 + 词级对齐 + 说话人分离） |
+| 说话人分离 | 不支持 | pyannote/speaker-diarization-3.1，本地运行 |
 | Python 兼容性 | 需要 3.10+（`str \| None` 语法） | 本地支持 3.9+（`from __future__ import annotations`） |
 
 ---
@@ -66,6 +70,13 @@ tmp/
 # Anthropic API Key（必填）
 # 获取地址：https://console.anthropic.com → API Keys → Create Key
 ANTHROPIC_API_KEY=your_key_here
+
+# HuggingFace Token（说话人分离功能需要，不填则跳过分离）
+# 第一步：https://huggingface.co/settings/tokens → 创建 Read token
+# 第二步：访问以下两个页面，点击 "Agree and access repository" 接受授权：
+#   https://huggingface.co/pyannote/speaker-diarization-3.1
+#   https://huggingface.co/pyannote/segmentation-3.0
+HF_TOKEN=
 ```
 
 ### docker.env
@@ -79,9 +90,12 @@ TEMP_DIR=./tmp
 OUTPUT_DIR=./output
 CELERY_BROKER_URL=redis://valkey:6379/0
 CELERY_RESULT_BACKEND=redis://valkey:6379/0
+ENABLE_DIARIZATION=true
 ```
 
-注意：`CELERY_BROKER_URL` 在 Docker 内使用服务名 `valkey`，不是 `localhost`。
+注意：
+- `CELERY_BROKER_URL` 在 Docker 内使用服务名 `valkey`，不是 `localhost`
+- `ENABLE_DIARIZATION=true` 时若 `HF_TOKEN` 为空，系统自动降级为无分离模式，不报错
 
 ---
 
@@ -193,9 +207,139 @@ def _load_preferences(self) -> str:
 
 ---
 
-## 七、不在本次范围内
+## 七、WhisperX 说话人分离集成
+
+### 依赖变更
+
+`requirements.txt` 中：
+- 移除 `faster-whisper`（whisperx 内部已包含）
+- 新增 `whisperx>=3.1.0`
+- 新增 `pyannote.audio>=3.1.0`
+
+`Dockerfile` 需先安装 PyTorch CPU 版本（体积更小），再安装其余依赖：
+
+```dockerfile
+FROM python:3.11-slim
+RUN apt-get update && apt-get install -y ffmpeg git && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 7860
+```
+
+docker-compose 新增模型缓存卷，避免每次重建容器重新下载模型（约 1.5 GB）：
+
+```yaml
+volumes:
+  - hf_models:/root/.cache/huggingface
+  - whisperx_models:/root/.cache/whisperx
+```
+
+### Segment 模型变更
+
+`models/edit_plan.py` 中 `Segment` 新增可选字段：
+
+```python
+class Segment(BaseModel):
+    start: float
+    end: float
+    text: str
+    speaker: Optional[str] = None  # 如 "SPEAKER_00"，无分离时为 None
+```
+
+### RuleType 新增 speaker_filter
+
+```python
+class RuleType(str, Enum):
+    KEYWORD_MATCH = "keyword_match"
+    TIME_RANGE = "time_range"
+    SILENCE_CUT = "silence_cut"
+    MIN_DURATION = "min_duration"
+    SPEAKER_FILTER = "speaker_filter"   # 新增
+```
+
+`Rule` 模型新增字段：
+
+```python
+class Rule(BaseModel):
+    ...
+    speakers: list[str] = Field(default_factory=list)  # 用于 speaker_filter
+```
+
+### Transcriber 重写
+
+用 WhisperX 三阶段流程替换原 faster-whisper 调用：
+
+```
+音频 → whisperx.transcribe（转录）
+     → whisperx.align（词级时间戳对齐）
+     → DiarizationPipeline（说话人分离，HF_TOKEN 存在时执行）
+     → whisperx.assign_word_speakers（说话人标签合并到 segment）
+     → 转换为 Segment 列表
+```
+
+`HF_TOKEN` 为空或 `ENABLE_DIARIZATION=false` 时，跳过分离步骤，`speaker` 字段为 `None`，其余功能不受影响。
+
+### IntentParser 更新
+
+**转录文本格式**（有说话人时）：
+
+```
+[12.3s – 18.5s] SPEAKER_00: 我们这款产品比竞品便宜 30%
+[19.1s – 24.8s] SPEAKER_01: 那在续航方面呢？
+```
+
+**LLM schema 新增 speaker_filter 规则类型**：
+
+```json
+{
+  "type": "speaker_filter",
+  "speakers": ["SPEAKER_00"],
+  "padding_before_sec": 2,
+  "padding_after_sec": 3
+}
+```
+
+System prompt 说明：仅当 transcript 中含有 SPEAKER_xx 标签时才可使用 speaker_filter，否则使用 keyword_match。
+
+### UI 变更
+
+候选片段表格在有说话人数据时新增"说话人"列：
+
+| 序号 | 说话人 | 时间范围 | 内容预览 | 置信度 | 包含 |
+|------|--------|---------|---------|------|------|
+| 1 | SPEAKER_00 | 12.3s – 18.5s | 我们这款产品比竞品... | 1.00 | ☑ |
+
+无分离数据时，该列不显示（向后兼容）。
+
+### Settings 变更
+
+```python
+class Settings(BaseSettings):
+    ...
+    hf_token: Optional[str] = None
+    enable_diarization: bool = True
+```
+
+### setup.sh 变更
+
+在填入 Anthropic Key 之后，新增 HF Token 引导步骤（可按回车跳过）：
+
+```
+[可选] 说话人分离功能需要 HuggingFace Token
+  获取地址：https://huggingface.co/settings/tokens
+  注意：还需在 HuggingFace 接受 pyannote 模型授权（详见 api_keys.env）
+请粘贴 HF Token（直接回车跳过，说话人分离将不可用）：
+```
+
+---
+
+## 八、不在本次范围内
 
 - 字幕烧录（FFmpeg subtitles filter）
 - S3 云存储实现
 - 视觉 AI 场景检测
 - USER_PREFERENCES.md 中结构化字段的程序化解析（当前全部作为自然语言注入 LLM）
+- GPU 加速支持（Dockerfile 使用 CPU 版 torch；有 GPU 的用户需自行替换 torch 安装命令）
