@@ -1,3 +1,4 @@
+from __future__ import annotations
 import gradio as gr
 from pathlib import Path
 from agent.orchestrator import Orchestrator
@@ -5,14 +6,11 @@ from processing.exporter import Exporter
 from models.edit_plan import CandidateSegment, OutputFormat, Platform
 from config.settings import settings
 
-# Module-level singletons — set to None initially so they can be patched in
-# tests before the first function call, and lazily initialized in production.
-orchestrator = None  # type: ignore
-exporter = None  # type: ignore
+orchestrator = None
+exporter = None
 
 
 def _ensure_initialized():
-    """Lazy-initialize singletons if not already set (e.g., patched in tests)."""
     global orchestrator, exporter
     if orchestrator is None:
         orchestrator = Orchestrator()
@@ -25,7 +23,6 @@ def run_pipeline(video_file, instruction: str, session_state: dict):
     if video_file is None:
         return "请上传视频文件", [], None, session_state
 
-    # Only initialize if not already set (tests patch before calling)
     if orchestrator is None:
         _ensure_initialized()
 
@@ -38,6 +35,7 @@ def run_pipeline(video_file, instruction: str, session_state: dict):
     for i, seg in enumerate(result.candidates):
         rows.append([
             i + 1,
+            seg.speaker or "—",
             f"{seg.start:.1f}s - {seg.end:.1f}s",
             seg.text_preview[:80],
             f"{seg.confidence_score:.2f}",
@@ -53,7 +51,6 @@ def export_approved(review_table, platform_choices: list[str], session_state: di
     if "result" not in session_state:
         return "请先运行分析", []
 
-    # Only initialize if not already set (tests patch before calling)
     if exporter is None:
         _ensure_initialized()
 
@@ -62,7 +59,7 @@ def export_approved(review_table, platform_choices: list[str], session_state: di
 
     approved_ids = set()
     for row in review_table:
-        idx, _, _, _, included = row
+        idx, _speaker, _time, _preview, _conf, included = row
         if included:
             approved_ids.add(int(idx) - 1)
 
@@ -84,7 +81,7 @@ def export_approved(review_table, platform_choices: list[str], session_state: di
 
 with gr.Blocks(title="视频自动剪辑 Agent") as demo:
     gr.Markdown("# 视频自动剪辑 Agent")
-    session_state = gr.State({})   # per-session isolation
+    session_state = gr.State({})
 
     with gr.Row():
         with gr.Column(scale=1):
@@ -102,8 +99,8 @@ with gr.Blocks(title="视频自动剪辑 Agent") as demo:
 
     gr.Markdown("## 候选片段审核")
     review_table = gr.Dataframe(
-        headers=["序号", "时间范围", "内容预览", "置信度", "包含"],
-        datatype=["number", "str", "str", "str", "bool"],
+        headers=["序号", "说话人", "时间范围", "内容预览", "置信度", "包含"],
+        datatype=["number", "str", "str", "str", "str", "bool"],
         interactive=True,
         label="勾选要保留的片段",
     )

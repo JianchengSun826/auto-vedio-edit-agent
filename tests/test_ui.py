@@ -30,7 +30,7 @@ def test_run_pipeline_returns_candidate_rows(mock_orch, tmp_path):
 
     assert "2 个候选片段" in status
     assert len(rows) == 2
-    assert rows[0][4] is True  # included=True by default
+    assert rows[0][5] is True  # included=True by default
     assert "result" in state
 
 
@@ -60,8 +60,8 @@ def test_export_approved_filters_unchecked(mock_exporter, tmp_path):
     mock_exporter.export.return_value = [Path("out.mp4")]
 
     review_table = [
-        [1, "0s - 10s", "seg1", "1.00", True],   # included
-        [2, "10s - 20s", "seg2", "1.00", False],  # excluded
+        [1, "—", "0s - 10s", "seg1", "1.00", True],   # included
+        [2, "—", "10s - 20s", "seg2", "1.00", False],  # excluded
     ]
     status, files = export_approved(review_table, ["YouTube"], state)
 

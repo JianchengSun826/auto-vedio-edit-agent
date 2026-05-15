@@ -11,6 +11,10 @@ os.environ.setdefault("ANTHROPIC_API_KEY", "test-key-not-real")
 if 'whisperx' not in sys.modules:
     sys.modules['whisperx'] = MagicMock()
 
+# Mock gradio so tests can import app.main without a working gradio installation
+if 'gradio' not in sys.modules:
+    sys.modules['gradio'] = MagicMock()
+
 
 @pytest.fixture(autouse=True)
 def set_test_env(monkeypatch):
