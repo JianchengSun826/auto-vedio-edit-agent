@@ -253,7 +253,7 @@ HF_TOKEN=
 | 1 小时 | ~10,000 tokens | 约 ¥0.07 |
 | 3 小时 | ~30,000 tokens | 约 ¥0.20 |
 
-> 以上基于 Claude Haiku 官方定价（$0.80/百万输入 token，$4.00/百万输出 token），汇率按 1 USD = 7.2 CNY 折算，实际费用以 Anthropic 账单为准。
+> 以上基于 Claude Haiku 官方定价（$0.80/百万输入 token，$4.00/百万输出 token），汇率按 1 USD = 7.2 CNY 折算，实际费用以 Anthropic 账单为准。完整定价详见 [Anthropic 官方定价页面](https://www.anthropic.com/pricing)。
 
 **典型使用场景参考：**
 
