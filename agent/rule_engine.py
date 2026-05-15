@@ -1,3 +1,4 @@
+from __future__ import annotations
 from pathlib import Path
 from models.edit_plan import EditPlan, RuleType, Rule, Segment, CandidateSegment
 import uuid
@@ -17,6 +18,8 @@ class RuleEngine:
         for rule in plan.rules:
             if rule.type == RuleType.KEYWORD_MATCH:
                 candidates.extend(self._keyword_match(rule, transcript, video_duration))
+            elif rule.type == RuleType.SPEAKER_FILTER:
+                candidates.extend(self._speaker_filter(rule, transcript))
             elif rule.type == RuleType.TIME_RANGE:
                 candidates.extend(self._time_range(rule))
             elif rule.type == RuleType.MIN_DURATION:
@@ -45,6 +48,21 @@ class RuleEngine:
                     end=end,
                     text_preview=seg.text,
                     confidence_score=1.0,
+                    speaker=seg.speaker,
+                ))
+        return results
+
+    def _speaker_filter(self, rule: Rule, transcript: list[Segment]) -> list[CandidateSegment]:
+        results = []
+        for seg in transcript:
+            if seg.speaker and seg.speaker in rule.speakers:
+                results.append(CandidateSegment(
+                    id=str(uuid.uuid4()),
+                    start=max(0.0, seg.start - rule.padding_before_sec),
+                    end=seg.end + rule.padding_after_sec,
+                    text_preview=seg.text,
+                    confidence_score=1.0,
+                    speaker=seg.speaker,
                 ))
         return results
 
@@ -104,13 +122,14 @@ class RuleEngine:
         merged = [sorted_segs[0]]
         for current in sorted_segs[1:]:
             last = merged[-1]
-            if current.start <= last.end:
+            if current.start < last.end:
                 merged[-1] = CandidateSegment(
                     id=last.id,
                     start=last.start,
                     end=max(last.end, current.end),
                     text_preview=f"{last.text_preview} | {current.text_preview}",
                     confidence_score=max(last.confidence_score, current.confidence_score),
+                    speaker=last.speaker if last.speaker == current.speaker else None,
                 )
             else:
                 merged.append(current)

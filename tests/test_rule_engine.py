@@ -66,3 +66,65 @@ def test_time_range_extracts_correct_segment():
     assert len(candidates) == 1
     assert candidates[0].start == 5.0
     assert candidates[0].end == 15.0
+
+
+TRANSCRIPT_WITH_SPEAKERS = [
+    Segment(start=0.0, end=5.0, text="今天介绍产品功能", speaker="SPEAKER_00"),
+    Segment(start=5.0, end=12.0, text="竞品的价格非常高", speaker="SPEAKER_01"),
+    Segment(start=12.0, end=20.0, text="我们提供更好的性价比", speaker="SPEAKER_00"),
+    Segment(start=20.0, end=25.0, text="欢迎联系我们了解竞品对比", speaker="SPEAKER_01"),
+]
+
+
+def test_speaker_filter_returns_only_matching_speaker():
+    plan = EditPlan(
+        mode=EditMode.HIGHLIGHT_EXTRACTION,
+        rules=[Rule(type=RuleType.SPEAKER_FILTER, speakers=["SPEAKER_00"],
+                    padding_before_sec=0, padding_after_sec=0)],
+        output_formats=[OutputFormat(platform=Platform.YOUTUBE)],
+    )
+    engine = RuleEngine()
+    candidates = engine.execute(plan, TRANSCRIPT_WITH_SPEAKERS, video_path=None)
+
+    assert len(candidates) == 2
+    assert all(c.speaker == "SPEAKER_00" for c in candidates)
+
+
+def test_speaker_filter_multiple_speakers():
+    plan = EditPlan(
+        mode=EditMode.HIGHLIGHT_EXTRACTION,
+        rules=[Rule(type=RuleType.SPEAKER_FILTER,
+                    speakers=["SPEAKER_00", "SPEAKER_01"],
+                    padding_before_sec=0, padding_after_sec=0)],
+        output_formats=[OutputFormat(platform=Platform.YOUTUBE)],
+    )
+    engine = RuleEngine()
+    candidates = engine.execute(plan, TRANSCRIPT_WITH_SPEAKERS, video_path=None)
+    assert len(candidates) == 4
+
+
+def test_speaker_filter_no_match_returns_empty():
+    plan = EditPlan(
+        mode=EditMode.HIGHLIGHT_EXTRACTION,
+        rules=[Rule(type=RuleType.SPEAKER_FILTER, speakers=["SPEAKER_99"],
+                    padding_before_sec=0, padding_after_sec=0)],
+        output_formats=[OutputFormat(platform=Platform.YOUTUBE)],
+    )
+    engine = RuleEngine()
+    candidates = engine.execute(plan, TRANSCRIPT_WITH_SPEAKERS, video_path=None)
+    assert candidates == []
+
+
+def test_keyword_match_carries_speaker():
+    plan = EditPlan(
+        mode=EditMode.HIGHLIGHT_EXTRACTION,
+        rules=[Rule(type=RuleType.KEYWORD_MATCH, keywords=["竞品"],
+                    padding_before_sec=0, padding_after_sec=0)],
+        output_formats=[OutputFormat(platform=Platform.YOUTUBE)],
+    )
+    engine = RuleEngine()
+    candidates = engine.execute(plan, TRANSCRIPT_WITH_SPEAKERS, video_path=None)
+
+    # Both segments containing "竞品" should carry their speaker label
+    speakers = {c.speaker for c in candidates}
+    assert "SPEAKER_01" in speakers
