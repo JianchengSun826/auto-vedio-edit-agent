@@ -39,3 +39,34 @@ def test_output_format_youtube_defaults():
     fmt = OutputFormat(platform=Platform.YOUTUBE)
     assert fmt.ratio == "16:9"
     assert fmt.max_duration_sec is None
+
+
+def test_segment_has_optional_speaker():
+    seg = Segment(start=0.0, end=5.0, text="hello")
+    assert seg.speaker is None
+
+    seg_with_speaker = Segment(start=0.0, end=5.0, text="hello", speaker="SPEAKER_00")
+    assert seg_with_speaker.speaker == "SPEAKER_00"
+
+
+def test_candidate_segment_has_optional_speaker():
+    seg = CandidateSegment(id="1", start=0.0, end=5.0, text_preview="test")
+    assert seg.speaker is None
+
+    seg_with_speaker = CandidateSegment(
+        id="2", start=0.0, end=5.0, text_preview="test", speaker="SPEAKER_01"
+    )
+    assert seg_with_speaker.speaker == "SPEAKER_01"
+
+
+def test_speaker_filter_rule_type_exists():
+    from models.edit_plan import RuleType
+    assert RuleType.SPEAKER_FILTER == "speaker_filter"
+
+
+def test_rule_has_speakers_field():
+    rule = Rule(type=RuleType.KEYWORD_MATCH, keywords=["竞品"])
+    assert rule.speakers == []
+
+    rule_with_speakers = Rule(type=RuleType.SPEAKER_FILTER, speakers=["SPEAKER_00"])
+    assert rule_with_speakers.speakers == ["SPEAKER_00"]

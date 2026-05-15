@@ -1,3 +1,4 @@
+from __future__ import annotations
 from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, Field
@@ -14,6 +15,7 @@ class RuleType(str, Enum):
     TIME_RANGE = "time_range"
     SILENCE_CUT = "silence_cut"
     MIN_DURATION = "min_duration"
+    SPEAKER_FILTER = "speaker_filter"
 
 
 class Platform(str, Enum):
@@ -35,6 +37,7 @@ _PLATFORM_DEFAULTS = {
 class Rule(BaseModel):
     type: RuleType
     keywords: list[str] = Field(default_factory=list)
+    speakers: list[str] = Field(default_factory=list)
     padding_before_sec: float = 3.0
     padding_after_sec: float = 5.0
     min_duration_sec: float = 5.0
@@ -73,6 +76,7 @@ class Segment(BaseModel):
     start: float
     end: float
     text: str
+    speaker: Optional[str] = None
 
 
 class CandidateSegment(BaseModel):
@@ -84,3 +88,4 @@ class CandidateSegment(BaseModel):
     confidence_score: float = 1.0
     included: bool = True
     source_file: Optional[str] = None   # for material assembly mode
+    speaker: Optional[str] = None
