@@ -9,3 +9,5 @@ data/
 *.egg-info/
 dist/
 .venv/
+api_keys.env
+USER_PREFERENCES.md
