@@ -184,7 +184,7 @@ auto-vedio-edit-agent/
 
 ### Anthropic API Key
 
-用于 AI 意图解析（必填）。
+用于「AI 理解你的剪辑指令」功能（必填）。
 
 **获取步骤：**
 
@@ -230,7 +230,9 @@ HF_TOKEN=
 
 ## 使用费用说明
 
-本工具的绝大部分计算在本机运行，**只有 AI 意图解析（将你的指令转为剪辑计划）调用 Anthropic API，按使用量计费**。
+本工具的绝大部分计算在本机运行，**只有「AI 理解你的剪辑指令」功能调用 Anthropic API，按使用量计费**。
+
+此功能由用户主动触发：填写剪辑需求后点击「开始分析」按钮才会调用，浏览界面、审核片段、导出视频均不产生费用。
 
 ### 各模块费用
 
@@ -239,7 +241,7 @@ HF_TOKEN=
 | 语音转录 | WhisperX（本地运行） | **免费** |
 | 说话人分离 | pyannote（本地运行） | **免费** |
 | 视频剪辑导出 | FFmpeg（本地运行） | **免费** |
-| AI 意图解析 | Claude Haiku API | **按量计费**，见下表 |
+| AI 理解你的剪辑指令 | Claude Haiku API | **按量计费**，见下表 |
 | HuggingFace 模型下载 | pyannote 模型约 1.5 GB | **免费**（一次性下载） |
 
 ### Claude Haiku API 费用估算
@@ -690,7 +692,7 @@ auto-vedio-edit-agent/
 ├── app/
 │   └── main.py              ← Gradio UI 入口
 ├── agent/
-│   ├── intent_parser.py     ← AI 意图解析（读取 USER_PREFERENCES.md）
+│   ├── intent_parser.py     ← AI 理解你的剪辑指令（读取 USER_PREFERENCES.md）
 │   ├── orchestrator.py      ← 流水线编排
 │   └── rule_engine.py       ← 规则执行引擎
 ├── processing/
