@@ -84,3 +84,66 @@ def test_parse_raises_after_two_failures(mock_anthropic_cls):
     parser = IntentParser()
     with pytest.raises(ValueError, match="Failed to parse"):
         parser.parse(user_instruction="test", transcript=[])
+
+
+def test_preferences_injected_into_system_prompt(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    prefs = tmp_path / "USER_PREFERENCES.md"
+    prefs.write_text("## 偏好\n- 默认留白 5 秒", encoding="utf-8")
+
+    with patch("agent.intent_parser.anthropic.Anthropic") as mock_cls:
+        mock_client = MagicMock()
+        mock_cls.return_value = mock_client
+        mock_client.messages.create.return_value = MagicMock(
+            content=[MagicMock(text=SAMPLE_LLM_RESPONSE)]
+        )
+        parser = IntentParser()
+        parser.parse(user_instruction="test", transcript=[])
+
+    call_kwargs = mock_client.messages.create.call_args
+    system_prompt = call_kwargs.kwargs.get("system") or ""
+    if not system_prompt:
+        system_prompt = call_kwargs[1].get("system", "")
+    assert "## 偏好" in system_prompt
+    assert "默认留白 5 秒" in system_prompt
+
+
+def test_no_preferences_file_uses_base_prompt(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # directory has no USER_PREFERENCES.md
+
+    with patch("agent.intent_parser.anthropic.Anthropic") as mock_cls:
+        mock_client = MagicMock()
+        mock_cls.return_value = mock_client
+        mock_client.messages.create.return_value = MagicMock(
+            content=[MagicMock(text=SAMPLE_LLM_RESPONSE)]
+        )
+        parser = IntentParser()
+        parser.parse(user_instruction="test", transcript=[])
+
+    call_kwargs = mock_client.messages.create.call_args
+    system_prompt = call_kwargs[1].get("system", "")
+    assert "[用户剪辑偏好]" not in system_prompt
+
+
+def test_transcript_includes_speaker_labels():
+    transcript = [
+        {"start": 0.0, "end": 5.0, "text": "hello", "speaker": "SPEAKER_00"},
+        {"start": 5.0, "end": 10.0, "text": "world", "speaker": None},
+    ]
+
+    with patch("agent.intent_parser.anthropic.Anthropic") as mock_cls:
+        mock_client = MagicMock()
+        mock_cls.return_value = mock_client
+        mock_client.messages.create.return_value = MagicMock(
+            content=[MagicMock(text=SAMPLE_LLM_RESPONSE)]
+        )
+        parser = IntentParser()
+        parser.parse(user_instruction="test", transcript=transcript)
+
+    call_kwargs = mock_client.messages.create.call_args
+    user_message = call_kwargs[1]["messages"][0]["content"]
+    assert "SPEAKER_00:" in user_message
+    # Second segment has no speaker — should not show a label
+    lines = user_message.split("\n")
+    speaker_none_line = next((l for l in lines if "world" in l), "")
+    assert "SPEAKER" not in speaker_none_line
