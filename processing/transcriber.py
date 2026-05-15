@@ -1,46 +1,80 @@
+from __future__ import annotations
+import whisperx
 from pathlib import Path
-from faster_whisper import WhisperModel
+from typing import Optional
 from models.edit_plan import Segment
 from config.settings import settings
 
-# Chunk size and threshold for splitting long videos
 CHUNK_DURATION = 1800   # 30 minutes per chunk
 CHUNK_THRESHOLD = 7200  # only chunk videos longer than 2 hours
 
 
 class Transcriber:
-    def __init__(self, model_size: str | None = None, device: str | None = None):
+    def __init__(self, model_size: Optional[str] = None, device: Optional[str] = None):
         size = model_size or settings.whisper_model
         dev = device or settings.whisper_device
-        self._model = WhisperModel(size, device=dev, compute_type="int8")
+        if dev == "auto":
+            try:
+                import torch
+                dev = "cuda" if torch.cuda.is_available() else "cpu"
+            except ImportError:
+                dev = "cpu"
+        self._device = dev
+        self._model = whisperx.load_model(size, self._device, compute_type="int8")
+        self._hf_token = settings.hf_token
+        self._enable_diarization = settings.enable_diarization
 
     def transcribe(self, video_path: Path) -> list[Segment]:
-        """Transcribe a video file. Returns list of Segment objects."""
         if not video_path.exists():
             raise FileNotFoundError(f"Video not found: {video_path}")
 
         duration = self._get_duration(video_path)
         if duration and duration > CHUNK_THRESHOLD:
             return self._transcribe_chunked(video_path, duration)
-
         return self._transcribe_single(video_path)
 
     def _transcribe_single(self, video_path: Path) -> list[Segment]:
-        segments_iter, _ = self._model.transcribe(
-            str(video_path),
-            vad_filter=True,
-            vad_parameters={"min_silence_duration_ms": 500},
-        )
+        audio = whisperx.load_audio(str(video_path))
+        result = self._model.transcribe(audio, batch_size=16)
+
+        # Word-level alignment — best-effort, skip on failure
+        try:
+            model_a, metadata = whisperx.load_align_model(
+                language_code=result["language"], device=self._device
+            )
+            result = whisperx.align(
+                result["segments"], model_a, metadata, audio, self._device,
+                return_char_alignments=False,
+            )
+        except Exception:
+            pass
+
+        # Speaker diarization — best-effort, requires HF token
+        if self._enable_diarization and self._hf_token:
+            try:
+                diarize_model = whisperx.DiarizationPipeline(
+                    use_auth_token=self._hf_token, device=self._device
+                )
+                diarize_segments = diarize_model(audio)
+                result = whisperx.assign_word_speakers(diarize_segments, result)
+            except Exception:
+                pass
+
         return [
-            Segment(start=seg.start, end=seg.end, text=seg.text.strip())
-            for seg in segments_iter
-            if seg.text.strip()
+            Segment(
+                start=seg["start"],
+                end=seg["end"],
+                text=seg["text"].strip(),
+                speaker=seg.get("speaker"),
+            )
+            for seg in result["segments"]
+            if seg.get("text", "").strip()
         ]
 
     def _transcribe_chunked(self, video_path: Path, duration: float) -> list[Segment]:
-        """Split video into 30-min chunks, transcribe each, merge with offset."""
-        import tempfile, subprocess
-        all_segments = []
+        import tempfile
+        import subprocess
+        all_segments: list[Segment] = []
         cursor = 0.0
         chunk_index = 0
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -52,19 +86,20 @@ class Transcriber:
                      "-i", str(video_path), "-c", "copy", str(chunk_path)],
                     capture_output=True, check=True,
                 )
-                segments = self._transcribe_single(chunk_path)
-                for seg in segments:
+                for seg in self._transcribe_single(chunk_path):
                     all_segments.append(Segment(
                         start=seg.start + cursor,
                         end=seg.end + cursor,
                         text=seg.text,
+                        speaker=seg.speaker,
                     ))
                 cursor = chunk_end
                 chunk_index += 1
         return all_segments
 
-    def _get_duration(self, video_path: Path) -> float | None:
-        import subprocess, re
+    def _get_duration(self, video_path: Path) -> Optional[float]:
+        import subprocess
+        import re
         try:
             result = subprocess.run(
                 ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
