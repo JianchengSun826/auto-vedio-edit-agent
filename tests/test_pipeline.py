@@ -144,3 +144,22 @@ def test_extract_speakers_no_diarization():
     from app.pipeline import extract_speakers
     transcript = [Segment(start=0.0, end=5.0, text="a", speaker=None)]
     assert extract_speakers(transcript) == []
+
+
+# ── step_html ────────────────────────────────────────────────────────────────
+
+def test_step_html_done_contains_checkmark():
+    from app.pipeline import step_html
+    html = step_html(done={1}, active=2, skip_llm=False)
+    assert "✓" in html
+
+def test_step_html_active_contains_spinner():
+    from app.pipeline import step_html
+    html = step_html(done={1}, active=2, skip_llm=False)
+    assert "⟳" in html
+
+def test_step_html_skip_llm_grays_step2():
+    from app.pipeline import step_html
+    # When skip_llm=True, step 2 should show the "—" suffix
+    html = step_html(done={1}, active=3, skip_llm=True)
+    assert " —" in html

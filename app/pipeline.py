@@ -43,10 +43,10 @@ def build_plan_from_buttons(
         rules.append(Rule(type=RuleType.SILENCE_CUT))
 
     return EditPlan(
-        mode=EditMode.HIGHLIGHT_EXTRACTION,
+        mode=EditMode.HIGHLIGHT_EXTRACTION,  # button path always extracts highlights
         rules=rules,
         output_formats=[],
-        segment_count_hint=max(1, len(rules) * 3),
+        segment_count_hint=3,
     )
 
 
@@ -57,7 +57,7 @@ def candidates_to_rows(candidates: list[CandidateSegment]) -> list[list]:
             i + 1,
             seg.speaker or "—",
             f"{seg.start:.1f}s – {seg.end:.1f}s",
-            seg.text_preview[:80],
+            (seg.text_preview[:77] + "…" if len(seg.text_preview) > 80 else seg.text_preview),
             f"{seg.confidence_score:.2f}",
             True,
         ]
