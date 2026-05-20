@@ -152,3 +152,38 @@ def test_export_approved_no_candidates_returns_update():
     result = export_approved([], ["YouTube"], {})
     # Should return gr.update(visible=False) when no candidates in state
     assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# confirm_speaker tests
+# ---------------------------------------------------------------------------
+
+def test_confirm_speaker_requires_state():
+    """confirm_speaker should not crash when state is empty."""
+    from app.main import confirm_speaker
+    gen = confirm_speaker(speaker_ids=["SPEAKER_00"], state={})
+    result = next(gen)
+    # Should yield an early-exit warning, not raise KeyError
+    assert result is not None
+
+
+def test_confirm_speaker_empty_speaker_ids():
+    """confirm_speaker should warn and return early when no speakers selected."""
+    from app.main import confirm_speaker
+    state = {
+        "transcript": [],
+        "video_path": "test.mp4",
+        "duration": 60.0,
+        "selected": ["speaker"],
+        "kw_text": "",
+        "kw_before": 3.0,
+        "kw_after": 5.0,
+        "t_start": None,
+        "t_end": None,
+    }
+    gen = confirm_speaker(speaker_ids=[], state=state)
+    # First yield: "正在执行说话人筛选…"
+    next(gen)
+    # Second yield: warning about no speakers
+    result = next(gen)
+    assert result is not None

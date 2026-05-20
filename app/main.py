@@ -81,6 +81,7 @@ def run_pipeline(
         yield (*EMPTY[:4], "⚠️ 请选择功能或输入需求", *EMPTY[5:])
         return
 
+    # button path always takes precedence over text instruction when both are provided
     use_llm = bool(instruction.strip()) and not selected
     skip_llm = bool(selected)
 
@@ -98,7 +99,7 @@ def run_pipeline(
 
     yield (
         gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
-        step_html({1}, 1, skip_llm),
+        step_html({1}, 2, skip_llm),
         f"✓ 转录完成，共 {len(transcript)} 个片段",
         gr.update(), "", [], state,
     )
@@ -188,10 +189,20 @@ def confirm_speaker(
     Yields 8-tuple: (progress_group, speaker_group, results_group,
                      step_bar, status, results_header, review_table, state)
     """
+    if "transcript" not in state:
+        yield (gr.update(), gr.update(), gr.update(), "", "⚠️ 请先上传视频并运行分析", "", [], state)
+        return
+
     yield (
         gr.update(visible=True), gr.update(visible=True), gr.update(visible=False),
         step_html({1}, 3, True), "正在执行说话人筛选…", "", [], state,
     )
+
+    if not speaker_ids:
+        yield (gr.update(visible=True), gr.update(visible=True), gr.update(visible=False),
+               step_html({1}, 2, False), "⚠️ 请至少选择一位说话人", "", [], state)
+        return
+
     progress(0.5, desc="正在执行规则…")
 
     transcript = [Segment(**s) for s in state["transcript"]]
