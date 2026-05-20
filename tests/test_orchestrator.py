@@ -60,3 +60,36 @@ def test_orchestrator_passes_transcript_to_parser(mock_transcriber_cls, mock_par
 
     call_kwargs = mock_parser.parse.call_args
     assert call_kwargs.kwargs["transcript"] is not None or call_kwargs.args[1] is not None
+
+
+@patch("agent.orchestrator.get_video_duration")
+@patch("agent.orchestrator.Transcriber")
+def test_transcribe_only_returns_transcript_and_duration(mock_transcriber_cls, mock_duration):
+    with patch("agent.orchestrator.Transcriber") as mock_transcriber_cls, \
+         patch("agent.orchestrator.get_video_duration") as mock_duration:
+        mock_transcriber = mock_transcriber_cls.return_value
+        mock_transcriber.transcribe.return_value = [
+            Segment(start=0.0, end=5.0, text="hello")
+        ]
+        mock_duration.return_value = 42.0
+
+        orch = Orchestrator()
+        transcript, duration = orch.transcribe_only(Path("test.mp4"))
+
+        assert len(transcript) == 1
+        assert transcript[0].text == "hello"
+        assert duration == 42.0
+
+
+@patch("agent.orchestrator.get_video_duration")
+@patch("agent.orchestrator.Transcriber")
+def test_transcribe_only_returns_none_duration_on_error(mock_transcriber_cls, mock_duration):
+    with patch("agent.orchestrator.Transcriber") as mock_transcriber_cls, \
+         patch("agent.orchestrator.get_video_duration", side_effect=RuntimeError("ffprobe missing")):
+        mock_transcriber_cls.return_value.transcribe.return_value = []
+
+        orch = Orchestrator()
+        transcript, duration = orch.transcribe_only(Path("test.mp4"))
+
+        assert transcript == []
+        assert duration is None
