@@ -60,30 +60,34 @@ def run_pipeline(
 ):
     """Phase-1 pipeline: transcribe → (LLM or button plan) → execute rules.
     For speaker mode, stops after transcription and returns speaker list.
-    Yields 9-tuple: (progress_group, speaker_group, results_group,
-                     step_bar, status, speaker_selector, results_header,
-                     review_table, state)
+    Yields 10-tuple: (progress_group, speaker_group, results_group,
+                      step_bar, status, speaker_selector, results_header,
+                      review_table, srt_download, state)
     """
-    EMPTY = (
-        gr.update(visible=False), gr.update(visible=False), gr.update(visible=False),
-        "", "", gr.update(), "", [], state,
-    )
+    _no_srt = gr.update(visible=False, value=None)
+
+    def _idle(*extra):
+        return (
+            gr.update(visible=False), gr.update(visible=False), gr.update(visible=False),
+            "", "", gr.update(), "", [], _no_srt, state,
+        )
 
     if video_file is None:
-        yield (*EMPTY[:4], "⚠️ 请先上传视频", *EMPTY[5:])
-        return
+        yield _idle(); return  # noqa: E702 – keep compact
     if not selected and not instruction.strip():
-        yield (*EMPTY[:4], "⚠️ 请选择功能或输入需求", *EMPTY[5:])
+        yield (
+            gr.update(visible=False), gr.update(visible=False), gr.update(visible=False),
+            "", "⚠️ 请选择功能或输入需求", gr.update(), "", [], _no_srt, state,
+        )
         return
 
-    # button path always takes precedence over text instruction when both are provided
     use_llm = bool(instruction.strip()) and not selected
     skip_llm = bool(selected)
 
     # Show progress area
     yield (
         gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
-        step_html(set(), 1, skip_llm), "准备开始…", gr.update(), "", [], state,
+        step_html(set(), 1, skip_llm), "准备开始…", gr.update(), "", [], _no_srt, state,
     )
 
     # Step 1: Transcribe
@@ -96,7 +100,7 @@ def run_pipeline(
         gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
         step_html({1}, 2, skip_llm),
         f"✓ 转录完成，共 {len(transcript)} 个片段",
-        gr.update(), "", [], state,
+        gr.update(), "", [], _no_srt, state,
     )
 
     # Generate SRT if subtitle extraction requested
@@ -121,9 +125,10 @@ def run_pipeline(
             )
             yield (
                 gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
-                step_html({1}, 2, False), msg, gr.update(), "", [], state,
+                step_html({1}, 2, False), msg, gr.update(), "", [], _no_srt, state,
             )
             return
+        srt_update = gr.update(visible=True, value=srt_path_str) if srt_path_str else _no_srt
         new_state = {
             **state,
             "transcript": [s.model_dump() for s in transcript],
@@ -143,27 +148,26 @@ def run_pipeline(
             step_html({1}, 2, False),
             f"✓ 检测到 {len(speakers)} 位说话人，请选择后点击「确认筛选」",
             gr.update(choices=speakers, value=[]),
-            "", [], new_state,
+            "", [], srt_update, new_state,
         )
         return
 
-    # Button path (non-speaker features)
-    non_subtitle = [f for f in selected if f != "subtitle"]
-    if non_subtitle:
+    # Button path (non-speaker, non-subtitle features)
+    non_meta = [f for f in selected if f not in ("subtitle",)]
+    if non_meta:
         progress(0.7, desc="正在执行规则…")
         keywords = [k.strip() for k in kw_text.split(",") if k.strip()]
         plan = build_plan_from_buttons(
-            selected=non_subtitle, keywords=keywords,
+            selected=non_meta, keywords=keywords,
             keyword_before=kw_before, keyword_after=kw_after,
             time_start=t_start, time_end=t_end,
             speaker_ids=[],
         )
         yield (
             gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
-            step_html({1}, 3, True), "正在执行规则…", gr.update(), "", [], state,
+            step_html({1}, 3, True), "正在执行规则…", gr.update(), "", [], _no_srt, state,
         )
     elif "subtitle" in selected:
-        # subtitle-only: no clip rules to run
         plan = build_plan_from_buttons(
             selected=[], keywords=[], keyword_before=0, keyword_after=0,
             time_start=None, time_end=None, speaker_ids=[],
@@ -174,7 +178,7 @@ def run_pipeline(
         progress(0.5, desc="正在解析意图…")
         yield (
             gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
-            step_html({1}, 2, False), "正在调用 AI 解析意图…", gr.update(), "", [], state,
+            step_html({1}, 2, False), "正在调用 AI 解析意图…", gr.update(), "", [], _no_srt, state,
         )
         parser = IntentParser()
         plan = parser.parse(
@@ -184,7 +188,7 @@ def run_pipeline(
         progress(0.8, desc="正在执行规则…")
         yield (
             gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
-            step_html({1, 2}, 3, False), "正在执行规则…", gr.update(), "", [], state,
+            step_html({1, 2}, 3, False), "正在执行规则…", gr.update(), "", [], _no_srt, state,
         )
 
     engine = RuleEngine()
@@ -199,17 +203,17 @@ def run_pipeline(
     if srt_path_str:
         new_state["srt_path"] = srt_path_str
 
+    srt_update = gr.update(visible=True, value=srt_path_str) if srt_path_str else _no_srt
     n_clips = len(candidates)
-    header_parts = [f"✅ 找到 **{n_clips}** 个候选片段"]
-    if srt_path_str:
-        header_parts.append("｜ 📄 字幕文件已生成，点击下方「下载」获取 SRT")
+    header = f"✅ 找到 **{n_clips}** 个候选片段"
     yield (
         gr.update(visible=False), gr.update(visible=False), gr.update(visible=True),
         step_html({1, 2, 3} if use_llm else {1, 3}, 0, skip_llm),
         "完成",
         gr.update(),
-        "  ".join(header_parts),
+        header,
         candidates_to_rows(candidates),
+        srt_update,
         new_state,
     )
 
@@ -219,21 +223,28 @@ def confirm_speaker(
     progress=gr.Progress(track_tqdm=True),
 ):
     """Phase-2: apply SPEAKER_FILTER after user picks speakers.
-    Yields 8-tuple: (progress_group, speaker_group, results_group,
-                     step_bar, status, results_header, review_table, state)
+    Yields 9-tuple: (progress_group, speaker_group, results_group,
+                     step_bar, status, results_header, review_table, srt_download, state)
     """
+    _no_srt = gr.update(visible=False, value=None)
+    srt_update = (
+        gr.update(visible=True, value=state["srt_path"])
+        if "srt_path" in state and Path(state["srt_path"]).exists()
+        else _no_srt
+    )
+
     if "transcript" not in state:
-        yield (gr.update(), gr.update(), gr.update(), "", "⚠️ 请先上传视频并运行分析", "", [], state)
+        yield (gr.update(), gr.update(), gr.update(), "", "⚠️ 请先上传视频并运行分析", "", [], _no_srt, state)
         return
 
     yield (
         gr.update(visible=True), gr.update(visible=True), gr.update(visible=False),
-        step_html({1}, 3, True), "正在执行说话人筛选…", "", [], state,
+        step_html({1}, 3, True), "正在执行说话人筛选…", "", [], _no_srt, state,
     )
 
     if not speaker_ids:
         yield (gr.update(visible=True), gr.update(visible=True), gr.update(visible=False),
-               step_html({1}, 2, False), "⚠️ 请至少选择一位说话人", "", [], state)
+               step_html({1}, 2, False), "⚠️ 请至少选择一位说话人", "", [], _no_srt, state)
         return
 
     progress(0.5, desc="正在执行规则…")
@@ -243,7 +254,7 @@ def confirm_speaker(
     duration = state.get("duration")
 
     plan = build_plan_from_buttons(
-        selected=state["selected"],
+        selected=[f for f in state["selected"] if f != "subtitle"],
         keywords=[k.strip() for k in state.get("kw_text", "").split(",") if k.strip()],
         keyword_before=state.get("kw_before", 3.0),
         keyword_after=state.get("kw_after", 5.0),
@@ -256,16 +267,14 @@ def confirm_speaker(
     candidates = engine.execute(plan, transcript, video_path, duration)
     progress(1.0, desc="完成")
 
-    new_state = {
-        **state,
-        "candidates": [c.model_dump() for c in candidates],
-    }
+    new_state = {**state, "candidates": [c.model_dump() for c in candidates]}
     yield (
         gr.update(visible=False), gr.update(visible=False), gr.update(visible=True),
         step_html({1, 3}, 0, True),
         "完成",
         f"✅ 找到 **{len(candidates)}** 个候选片段",
         candidates_to_rows(candidates),
+        srt_update,
         new_state,
     )
 
@@ -280,7 +289,13 @@ def export_raw(review_table, state: dict):
     output_dir = Path(settings.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    approved_indices = {int(row[0]) - 1 for row in review_table if row[5]}
+    approved_indices: set[int] = set()
+    for row in review_table:
+        try:
+            if row[5]:
+                approved_indices.add(int(row[0]) - 1)
+        except (TypeError, ValueError, IndexError):
+            pass
 
     paths = []
     for i, seg in enumerate(candidates):
@@ -290,10 +305,6 @@ def export_raw(review_table, state: dict):
         out_path = output_dir / out_name
         cut_segment(video_path, out_path, seg.start, seg.end)
         paths.append(str(out_path))
-
-    # Include SRT if subtitle was generated
-    if "srt_path" in state and Path(state["srt_path"]).exists():
-        paths.append(state["srt_path"])
 
     if not paths:
         return gr.update(visible=False)
@@ -367,9 +378,14 @@ with gr.Blocks(title="视频自动剪辑 Agent") as demo:
             interactive=True,
             label="勾选要保留的片段",
         )
+        srt_download = gr.File(
+            label="📄 字幕文件（SRT）",
+            file_count="single",
+            visible=False,
+        )
         export_btn = gr.Button("⬇️ 下载选中片段", variant="primary")
         export_files = gr.File(
-            label="下载文件",
+            label="视频片段下载",
             file_count="multiple",
             visible=False,
         )
@@ -399,6 +415,7 @@ with gr.Blocks(title="视频自动剪辑 Agent") as demo:
         step_bar, progress_status,
         speaker_selector,
         results_header, review_table,
+        srt_download,
         session_state,
     ]
 
@@ -420,6 +437,7 @@ with gr.Blocks(title="视频自动剪辑 Agent") as demo:
             progress_group, speaker_group, results_group,
             step_bar, progress_status,
             results_header, review_table,
+            srt_download,
             session_state,
         ],
     )
@@ -432,4 +450,7 @@ with gr.Blocks(title="视频自动剪辑 Agent") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0")
+    demo.launch(
+        server_name="0.0.0.0",
+        allowed_paths=[str(Path(settings.output_dir).resolve())],
+    )
