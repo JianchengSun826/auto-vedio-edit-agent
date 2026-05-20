@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
 from models.edit_plan import EditPlan, Segment, CandidateSegment
@@ -46,3 +48,12 @@ class Orchestrator:
             plan=plan,
             candidates=candidates,
         )
+
+    def transcribe_only(self, video_path: Path) -> tuple[list[Segment], float | None]:
+        """Transcribe video and return (transcript, duration). No LLM called."""
+        transcript = self._transcriber.transcribe(video_path)
+        try:
+            duration = get_video_duration(video_path)
+        except Exception:
+            duration = None
+        return transcript, duration
