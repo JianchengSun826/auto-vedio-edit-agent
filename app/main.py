@@ -2,10 +2,10 @@ from __future__ import annotations
 import gradio as gr
 from pathlib import Path
 
-from agent.orchestrator import Orchestrator
 from agent.intent_parser import IntentParser
 from agent.rule_engine import RuleEngine
-from processing.ffmpeg_utils import cut_segment
+from processing.transcriber import Transcriber
+from processing.ffmpeg_utils import cut_segment, get_video_duration
 from processing.subtitle import segments_to_srt
 from models.edit_plan import CandidateSegment, Segment
 from config.settings import settings
@@ -15,6 +15,9 @@ from app.pipeline import (
     extract_speakers,
     step_html,
 )
+
+# Load WhisperX model once at startup — shared across all requests
+_transcriber = Transcriber()
 
 
 def _toggle(feature: str, current: list[str]):
@@ -74,11 +77,39 @@ def run_pipeline(
         step_html(set(), 1, skip_llm), "准备开始…", gr.update(), "", [], _no_srt, state,
     )
 
-    # Step 1: Transcribe
-    progress(0.1, desc="正在转录音频…")
-    orch = Orchestrator()
+    # Step 1: Transcribe in a background thread so we can yield heartbeats and
+    # keep the WebSocket alive during long videos (otherwise Gradio disconnects).
+    import threading
+    progress(0.1)
     video_path = Path(video_file)
-    transcript, duration = orch.transcribe_only(video_path)
+    _result: dict = {}
+
+    def _do_transcribe():
+        try:
+            _result["transcript"] = _transcriber.transcribe(
+                video_path, diarize="speaker" in selected
+            )
+        except Exception as exc:
+            _result["error"] = exc
+
+    t = threading.Thread(target=_do_transcribe, daemon=True)
+    t.start()
+    while t.is_alive():
+        t.join(timeout=5)
+        if t.is_alive():
+            yield (
+                gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
+                step_html(set(), 1, skip_llm), "正在转录音频…", gr.update(), "", [], _no_srt, state,
+            )
+
+    if "error" in _result:
+        raise _result["error"]
+    transcript = _result["transcript"]
+
+    try:
+        duration = get_video_duration(video_path)
+    except Exception:
+        duration = None
 
     yield (
         gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
@@ -137,7 +168,7 @@ def run_pipeline(
     # Button path (non-speaker, non-subtitle features)
     non_meta = [f for f in selected if f not in ("subtitle",)]
     if non_meta:
-        progress(0.7, desc="正在执行规则…")
+        progress(0.7)
         keywords = [k.strip() for k in (kw_text or "").split(",") if k.strip()]
         plan = build_plan_from_buttons(
             selected=non_meta, keywords=keywords,
@@ -157,7 +188,7 @@ def run_pipeline(
 
     # LLM path
     else:
-        progress(0.5, desc="正在解析意图…")
+        progress(0.5)
         yield (
             gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
             step_html({1}, 2, False), "正在调用 AI 解析意图…", gr.update(), "", [], _no_srt, state,
@@ -167,7 +198,7 @@ def run_pipeline(
             user_instruction=instruction,
             transcript=[s.model_dump() for s in transcript],
         )
-        progress(0.8, desc="正在执行规则…")
+        progress(0.8)
         yield (
             gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
             step_html({1, 2}, 3, False), "正在执行规则…", gr.update(), "", [], _no_srt, state,
@@ -175,7 +206,7 @@ def run_pipeline(
 
     engine = RuleEngine()
     candidates = engine.execute(plan, transcript, video_path, duration)
-    progress(1.0, desc="完成")
+    progress(1.0)
 
     new_state = {
         **state,
@@ -232,7 +263,7 @@ def confirm_speaker(
                step_html({1}, 2, False), "⚠️ 请至少选择一位说话人", "", [], _no_srt, state)
         return
 
-    progress(0.5, desc="正在执行规则…")
+    progress(0.5)
 
     transcript = [Segment(**s) for s in state["transcript"]]
     video_path = Path(state["video_path"])
@@ -250,7 +281,7 @@ def confirm_speaker(
 
     engine = RuleEngine()
     candidates = engine.execute(plan, transcript, video_path, duration)
-    progress(1.0, desc="完成")
+    progress(1.0)
 
     new_state = {**state, "candidates": [c.model_dump() for c in candidates]}
     yield (
@@ -274,8 +305,12 @@ def export_raw(review_table, state: dict):
     output_dir = Path(settings.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Gradio passes Dataframe as a pandas DataFrame — convert to list of rows
+    import pandas as pd
+    rows = review_table.values.tolist() if isinstance(review_table, pd.DataFrame) else list(review_table or [])
+
     approved_indices: set[int] = set()
-    for row in review_table:
+    for row in rows:
         try:
             if row[5]:
                 approved_indices.add(int(row[0]) - 1)
@@ -436,7 +471,9 @@ with gr.Blocks(title="视频自动剪辑 Agent") as demo:
 
 
 if __name__ == "__main__":
+    demo.queue(default_concurrency_limit=1)
     demo.launch(
         server_name="0.0.0.0",
         allowed_paths=[str(Path(settings.output_dir).resolve())],
+        max_file_size="10gb",
     )
