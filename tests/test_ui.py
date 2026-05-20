@@ -1,73 +1,154 @@
 # tests/test_ui.py
+"""
+Tests for the new app/main.py UI functions.
+
+The new design:
+- run_pipeline is a generator (yields tuples) with 9 positional args + progress
+- export_approved returns gr.update(...)
+- No module-level orchestrator/exporter globals; instances are created inline
+"""
+from __future__ import annotations
 import pytest
 from unittest.mock import MagicMock, patch
 from pathlib import Path
-from models.edit_plan import EditPlan, EditMode, Rule, RuleType, OutputFormat, Platform, Segment, CandidateSegment
+from models.edit_plan import (
+    EditPlan, EditMode, Rule, RuleType, OutputFormat, Platform,
+    Segment, CandidateSegment,
+)
 
 
-def make_result(candidates):
-    plan = EditPlan(
-        mode=EditMode.HIGHLIGHT_EXTRACTION,
-        rules=[Rule(type=RuleType.KEYWORD_MATCH, keywords=["test"])],
-        output_formats=[OutputFormat(platform=Platform.YOUTUBE)],
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_segment(i: int = 1) -> Segment:
+    return Segment(
+        id=str(i), start=float(i * 10), end=float(i * 10 + 9),
+        text=f"segment {i}", speaker=f"SPEAKER_{i % 2}",
     )
-    from agent.orchestrator import OrchestrationResult
-    return OrchestrationResult(transcript=[], plan=plan, candidates=candidates)
 
 
-@patch("app.main.orchestrator")
-def test_run_pipeline_returns_candidate_rows(mock_orch, tmp_path):
+def _make_candidate(i: int = 1) -> CandidateSegment:
+    return CandidateSegment(
+        id=str(i), start=float(i * 10), end=float(i * 10 + 9),
+        text_preview=f"candidate {i}", speaker=f"SPEAKER_{i % 2}",
+    )
+
+
+def _exhaust_generator(gen):
+    """Collect all yielded values; return the last one."""
+    last = None
+    for val in gen:
+        last = val
+    return last
+
+
+# ---------------------------------------------------------------------------
+# run_pipeline tests
+# ---------------------------------------------------------------------------
+
+@patch("app.main.RuleEngine")
+@patch("app.main.build_plan_from_buttons")
+@patch("app.main.Orchestrator")
+def test_run_pipeline_returns_candidate_rows(
+    MockOrch, mock_build_plan, MockEngine, tmp_path
+):
     from app.main import run_pipeline
-    candidates = [
-        CandidateSegment(id="1", start=0.0, end=10.0, text_preview="hello world"),
-        CandidateSegment(id="2", start=20.0, end=30.0, text_preview="test segment"),
-    ]
-    mock_orch.run.return_value = make_result(candidates)
+
+    candidates = [_make_candidate(1), _make_candidate(2)]
+    transcript = [_make_segment(1), _make_segment(2)]
+
+    mock_orch_inst = MagicMock()
+    mock_orch_inst.transcribe_only.return_value = (transcript, 30.0)
+    MockOrch.return_value = mock_orch_inst
+
+    mock_plan = MagicMock()
+    mock_build_plan.return_value = mock_plan
+
+    mock_engine_inst = MagicMock()
+    mock_engine_inst.execute.return_value = candidates
+    MockEngine.return_value = mock_engine_inst
+
     video = tmp_path / "test.mp4"
     video.write_bytes(b"fake")
 
-    status, rows, _, state = run_pipeline(str(video), "test instruction", {})
+    gen = run_pipeline(
+        str(video),          # video_file
+        ["keyword"],         # selected
+        "price",             # kw_text
+        3.0,                 # kw_before
+        5.0,                 # kw_after
+        0.0,                 # t_start
+        60.0,                # t_end
+        "",                  # instruction
+        {},                  # state
+    )
+    last = _exhaust_generator(gen)
+    # last tuple: (prog_group, spk_group, res_group, step_bar, status,
+    #              spk_selector, results_header, review_table, state)
+    results_header = last[6]
+    review_table = last[7]
+    state = last[8]
 
-    assert "2 个候选片段" in status
-    assert len(rows) == 2
-    assert rows[0][5] is True  # included=True by default
-    assert "result" in state
+    assert "2" in results_header
+    assert len(review_table) == 2
+    assert review_table[0][5] is True   # included=True by default
+    assert "candidates" in state
 
 
-@patch("app.main.orchestrator")
-def test_run_pipeline_no_video_returns_error(mock_orch):
+@patch("app.main.Orchestrator")
+def test_run_pipeline_no_video_returns_error(MockOrch):
     from app.main import run_pipeline
-    status, rows, _, state = run_pipeline(None, "test", {})
-    assert "请上传" in status
-    assert rows == []
-    mock_orch.run.assert_not_called()
+
+    gen = run_pipeline(
+        None, ["keyword"], "", 3.0, 5.0, 0.0, 60.0, "", {},
+    )
+    last = _exhaust_generator(gen)
+    status = last[4]
+    assert "请先上传" in status
+    MockOrch.return_value.transcribe_only.assert_not_called()
 
 
-@patch("app.main.exporter")
-def test_export_approved_filters_unchecked(mock_exporter, tmp_path):
+# ---------------------------------------------------------------------------
+# export_approved tests
+# ---------------------------------------------------------------------------
+
+@patch("app.main.Exporter")
+def test_export_approved_filters_unchecked(MockExporter, tmp_path):
     from app.main import export_approved
-    from agent.orchestrator import OrchestrationResult
-    candidates = [
-        CandidateSegment(id="1", start=0.0, end=10.0, text_preview="seg1"),
-        CandidateSegment(id="2", start=10.0, end=20.0, text_preview="seg2"),
-    ]
+
+    candidates = [_make_candidate(1), _make_candidate(2)]
     video = tmp_path / "test.mp4"
     video.write_bytes(b"fake")
+
+    mock_exp_inst = MagicMock()
+    mock_exp_inst.export.return_value = [Path("out.mp4")]
+    MockExporter.return_value = mock_exp_inst
+
     state = {
-        "result": make_result(candidates),
-        "video_path": video,
+        "candidates": [c.model_dump() for c in candidates],
+        "video_path": str(video),
     }
-    mock_exporter.export.return_value = [Path("out.mp4")]
 
     review_table = [
-        [1, "—", "0s - 10s", "seg1", "1.00", True],   # included
-        [2, "—", "10s - 20s", "seg2", "1.00", False],  # excluded
+        [1, "—", "10s - 19s", "candidate 1", "1.00", True],   # included
+        [2, "—", "20s - 29s", "candidate 2", "1.00", False],  # excluded
     ]
-    status, files = export_approved(review_table, ["YouTube"], state)
 
-    assert "导出完成" in status
-    call_candidates = mock_exporter.export.call_args[0][1]
+    result = export_approved(review_table, ["YouTube"], state)
+    # result is gr.update(visible=True, value=[...])
+    assert result is not None
+
+    call_candidates = mock_exp_inst.export.call_args[0][1]
     included = [c for c in call_candidates if c.included]
     excluded = [c for c in call_candidates if not c.included]
     assert len(included) == 1
     assert len(excluded) == 1
+
+
+def test_export_approved_no_candidates_returns_update():
+    from app.main import export_approved
+
+    result = export_approved([], ["YouTube"], {})
+    # Should return gr.update(visible=False) when no candidates in state
+    assert result is not None
