@@ -156,7 +156,7 @@ def run_pipeline(
     non_meta = [f for f in selected if f not in ("subtitle",)]
     if non_meta:
         progress(0.7, desc="正在执行规则…")
-        keywords = [k.strip() for k in kw_text.split(",") if k.strip()]
+        keywords = [k.strip() for k in (kw_text or "").split(",") if k.strip()]
         plan = build_plan_from_buttons(
             selected=non_meta, keywords=keywords,
             keyword_before=kw_before, keyword_after=kw_after,
@@ -255,7 +255,7 @@ def confirm_speaker(
 
     plan = build_plan_from_buttons(
         selected=[f for f in state["selected"] if f != "subtitle"],
-        keywords=[k.strip() for k in state.get("kw_text", "").split(",") if k.strip()],
+        keywords=[k.strip() for k in (state.get("kw_text") or "").split(",") if k.strip()],
         keyword_before=state.get("kw_before", 3.0),
         keyword_after=state.get("kw_after", 5.0),
         time_start=state.get("t_start"),
