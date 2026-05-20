@@ -6,6 +6,7 @@ from agent.orchestrator import Orchestrator
 from agent.intent_parser import IntentParser
 from agent.rule_engine import RuleEngine
 from processing.ffmpeg_utils import cut_segment
+from processing.subtitle import segments_to_srt
 from models.edit_plan import CandidateSegment, Segment
 from config.settings import settings
 from app.pipeline import (
@@ -43,6 +44,7 @@ def _toggle(feature: str, current: list[str]):
         gr.update(variant="primary" if "speaker" in new else "secondary"),
         gr.update(variant="primary" if "time" in new else "secondary"),
         gr.update(variant="primary" if "silence" in new else "secondary"),
+        gr.update(variant="primary" if "subtitle" in new else "secondary"),
         gr.update(visible="keyword" in new),
         gr.update(visible="time" in new),
         gr.update(value=label),
@@ -97,9 +99,31 @@ def run_pipeline(
         gr.update(), "", [], state,
     )
 
+    # Generate SRT if subtitle extraction requested
+    srt_path_str: str | None = None
+    if "subtitle" in selected:
+        output_dir = Path(settings.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        srt_file = output_dir / f"{video_path.stem}.srt"
+        segments_to_srt(transcript, srt_file)
+        srt_path_str = str(srt_file)
+
     # Speaker mode: stop and show selector
     if "speaker" in selected:
         speakers = extract_speakers(transcript)
+        if len(speakers) == 0:
+            no_token = not settings.hf_token
+            msg = (
+                "⚠️ 未检测到说话人。说话人分离需要配置 HuggingFace Token，"
+                "请在 api_keys.env 中填写 HF_TOKEN 并重启服务。详见 README 安装说明。"
+                if no_token else
+                "⚠️ 未检测到说话人。pyannote 分析返回空结果，请确认视频有清晰的多人对话音频。"
+            )
+            yield (
+                gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
+                step_html({1}, 2, False), msg, gr.update(), "", [], state,
+            )
+            return
         new_state = {
             **state,
             "transcript": [s.model_dump() for s in transcript],
@@ -112,6 +136,8 @@ def run_pipeline(
             "t_start": t_start,
             "t_end": t_end,
         }
+        if srt_path_str:
+            new_state["srt_path"] = srt_path_str
         yield (
             gr.update(visible=True), gr.update(visible=True), gr.update(visible=False),
             step_html({1}, 2, False),
@@ -121,12 +147,13 @@ def run_pipeline(
         )
         return
 
-    # Button path
-    if selected:
+    # Button path (non-speaker features)
+    non_subtitle = [f for f in selected if f != "subtitle"]
+    if non_subtitle:
         progress(0.7, desc="正在执行规则…")
         keywords = [k.strip() for k in kw_text.split(",") if k.strip()]
         plan = build_plan_from_buttons(
-            selected=selected, keywords=keywords,
+            selected=non_subtitle, keywords=keywords,
             keyword_before=kw_before, keyword_after=kw_after,
             time_start=t_start, time_end=t_end,
             speaker_ids=[],
@@ -134,6 +161,12 @@ def run_pipeline(
         yield (
             gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
             step_html({1}, 3, True), "正在执行规则…", gr.update(), "", [], state,
+        )
+    elif "subtitle" in selected:
+        # subtitle-only: no clip rules to run
+        plan = build_plan_from_buttons(
+            selected=[], keywords=[], keyword_before=0, keyword_after=0,
+            time_start=None, time_end=None, speaker_ids=[],
         )
 
     # LLM path
@@ -163,12 +196,19 @@ def run_pipeline(
         "candidates": [c.model_dump() for c in candidates],
         "video_path": str(video_path),
     }
+    if srt_path_str:
+        new_state["srt_path"] = srt_path_str
+
+    n_clips = len(candidates)
+    header_parts = [f"✅ 找到 **{n_clips}** 个候选片段"]
+    if srt_path_str:
+        header_parts.append("｜ 📄 字幕文件已生成，点击下方「下载」获取 SRT")
     yield (
         gr.update(visible=False), gr.update(visible=False), gr.update(visible=True),
         step_html({1, 2, 3} if use_llm else {1, 3}, 0, skip_llm),
         "完成",
         gr.update(),
-        f"✅ 找到 **{len(candidates)}** 个候选片段",
+        "  ".join(header_parts),
         candidates_to_rows(candidates),
         new_state,
     )
@@ -241,8 +281,6 @@ def export_raw(review_table, state: dict):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     approved_indices = {int(row[0]) - 1 for row in review_table if row[5]}
-    if not approved_indices:
-        return gr.update(visible=False)
 
     paths = []
     for i, seg in enumerate(candidates):
@@ -253,7 +291,13 @@ def export_raw(review_table, state: dict):
         cut_segment(video_path, out_path, seg.start, seg.end)
         paths.append(str(out_path))
 
-    return gr.update(visible=True, value=paths if paths else None)
+    # Include SRT if subtitle was generated
+    if "srt_path" in state and Path(state["srt_path"]).exists():
+        paths.append(state["srt_path"])
+
+    if not paths:
+        return gr.update(visible=False)
+    return gr.update(visible=True, value=paths)
 
 
 # ── UI Layout ────────────────────────────────────────────────────────────────
@@ -277,6 +321,8 @@ with gr.Blocks(title="视频自动剪辑 Agent") as demo:
             with gr.Row():
                 btn_time = gr.Button("⏱ 截取时间段", variant="secondary", size="sm")
                 btn_silence = gr.Button("✂️ 去除静音", variant="secondary", size="sm")
+            with gr.Row():
+                btn_subtitle = gr.Button("📄 导出字幕（SRT）", variant="secondary", size="sm")
 
             with gr.Group(visible=False) as keyword_params_group:
                 kw_input = gr.Textbox(
@@ -332,7 +378,7 @@ with gr.Blocks(title="视频自动剪辑 Agent") as demo:
 
     _toggle_outputs = [
         selected_features,
-        btn_keyword, btn_speaker, btn_time, btn_silence,
+        btn_keyword, btn_speaker, btn_time, btn_silence, btn_subtitle,
         keyword_params_group, time_params_group,
         start_btn,
     ]
@@ -345,6 +391,8 @@ with gr.Blocks(title="视频自动剪辑 Agent") as demo:
                    inputs=[selected_features], outputs=_toggle_outputs)
     btn_silence.click(fn=lambda s: _toggle("silence", s),
                       inputs=[selected_features], outputs=_toggle_outputs)
+    btn_subtitle.click(fn=lambda s: _toggle("subtitle", s),
+                       inputs=[selected_features], outputs=_toggle_outputs)
 
     _pipeline_outputs = [
         progress_group, speaker_group, results_group,
