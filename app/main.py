@@ -54,7 +54,7 @@ def run_pipeline(
     kw_text: str, kw_before: float, kw_after: float,
     t_start: float, t_end: float,
     instruction: str, state: dict,
-    progress=gr.Progress(),
+    progress=gr.Progress(track_tqdm=True),
 ):
     """Phase-1 pipeline: transcribe → (LLM or button plan) → execute rules.
     For speaker mode, stops after transcription and returns speaker list.
@@ -176,7 +176,7 @@ def run_pipeline(
 
 def confirm_speaker(
     speaker_ids: list[str], state: dict,
-    progress=gr.Progress(),
+    progress=gr.Progress(track_tqdm=True),
 ):
     """Phase-2: apply SPEAKER_FILTER after user picks speakers.
     Yields 8-tuple: (progress_group, speaker_group, results_group,
@@ -304,7 +304,7 @@ with gr.Blocks(title="视频自动剪辑 Agent") as demo:
     # ── Region 2: progress (appears after start) ──────────────────────────────
     with gr.Group(visible=False) as progress_group:
         step_bar = gr.HTML()
-        progress_status = gr.Textbox(label="进度", interactive=False)
+        progress_status = gr.Markdown()
 
     # Speaker selector (shown only in speaker mode after transcription)
     with gr.Group(visible=False) as speaker_group:
