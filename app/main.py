@@ -275,7 +275,7 @@ def confirm_speaker(
 
 
 def export_raw(review_table, state: dict):
-    """Cut each approved segment from source video using stream copy and return as downloads."""
+    """Cut approved segments in parallel (ffmpeg stream copy) and return as downloads."""
     if "candidates" not in state or "video_path" not in state:
         return gr.update(visible=False)
 
@@ -292,14 +292,26 @@ def export_raw(review_table, state: dict):
         except (TypeError, ValueError, IndexError):
             pass
 
-    paths = []
+    # Build list of (index, out_path, start, end) for approved clips
+    jobs: list[tuple[int, Path, float, float]] = []
     for i, seg in enumerate(candidates):
         if i not in approved_indices:
             continue
         out_name = f"{video_path.stem}_clip{i + 1}_{int(seg.start)}s-{int(seg.end)}s.mp4"
-        out_path = output_dir / out_name
-        cut_segment(video_path, out_path, seg.start, seg.end)
-        paths.append(str(out_path))
+        jobs.append((i, output_dir / out_name, seg.start, seg.end))
+
+    # Cut clips in parallel — ffmpeg stream copy is I/O-bound, not CPU-bound
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    futures_map = {}
+    with ThreadPoolExecutor(max_workers=min(4, len(jobs) or 1)) as pool:
+        for idx, out_path, start, end in jobs:
+            f = pool.submit(cut_segment, video_path, out_path, start, end)
+            futures_map[f] = out_path
+        for f in as_completed(futures_map):
+            f.result()  # propagate any ffmpeg errors
+
+    # Return paths sorted by original clip index
+    paths = [str(out_path) for _, out_path, _, _ in jobs]
 
     if not paths:
         return gr.update(visible=False)
