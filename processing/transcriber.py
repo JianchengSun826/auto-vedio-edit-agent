@@ -52,13 +52,15 @@ class Transcriber:
         # Speaker diarization — best-effort, requires HF token
         if self._enable_diarization and self._hf_token:
             try:
-                diarize_model = whisperx.DiarizationPipeline(
-                    use_auth_token=self._hf_token, device=self._device
+                from whisperx.diarize import DiarizationPipeline
+                diarize_model = DiarizationPipeline(
+                    token=self._hf_token, device=self._device
                 )
                 diarize_segments = diarize_model(audio)
                 result = whisperx.assign_word_speakers(diarize_segments, result)
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("Speaker diarization failed: %s", e)
 
         return [
             Segment(
