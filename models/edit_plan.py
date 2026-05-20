@@ -72,7 +72,7 @@ class EditPlan(BaseModel):
 
 
 class Segment(BaseModel):
-    """Raw transcript segment from faster-whisper."""
+    """Raw transcript segment from WhisperX."""
     start: float
     end: float
     text: str
