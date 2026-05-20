@@ -5,8 +5,8 @@ from pathlib import Path
 from agent.orchestrator import Orchestrator
 from agent.intent_parser import IntentParser
 from agent.rule_engine import RuleEngine
-from processing.exporter import Exporter
-from models.edit_plan import CandidateSegment, OutputFormat, Platform, Segment
+from processing.ffmpeg_utils import cut_segment
+from models.edit_plan import CandidateSegment, Segment
 from config.settings import settings
 from app.pipeline import (
     build_plan_from_buttons,
@@ -14,13 +14,6 @@ from app.pipeline import (
     extract_speakers,
     step_html,
 )
-
-PLATFORM_MAP = {
-    "抖音": Platform.DOUYIN,
-    "B站": Platform.BILIBILI,
-    "YouTube": Platform.YOUTUBE,
-    "微信视频号": Platform.WECHAT,
-}
 
 PRICING_HTML = """
 <div style="background:#182818;border:1px solid #2a4a2a;border-radius:6px;
@@ -237,21 +230,30 @@ def confirm_speaker(
     )
 
 
-def export_approved(review_table, platform_choices: list[str], state: dict):
-    if "candidates" not in state:
+def export_raw(review_table, state: dict):
+    """Cut each approved segment from source video using stream copy and return as downloads."""
+    if "candidates" not in state or "video_path" not in state:
         return gr.update(visible=False)
 
     candidates = [CandidateSegment(**c) for c in state["candidates"]]
     video_path = Path(state["video_path"])
+    output_dir = Path(settings.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    approved = {int(row[0]) - 1 for row in review_table if row[5]}
+    approved_indices = {int(row[0]) - 1 for row in review_table if row[5]}
+    if not approved_indices:
+        return gr.update(visible=False)
+
+    paths = []
     for i, seg in enumerate(candidates):
-        seg.included = (i in approved)
+        if i not in approved_indices:
+            continue
+        out_name = f"{video_path.stem}_clip{i + 1}_{int(seg.start)}s-{int(seg.end)}s.mp4"
+        out_path = output_dir / out_name
+        cut_segment(video_path, out_path, seg.start, seg.end)
+        paths.append(str(out_path))
 
-    formats = [OutputFormat(platform=PLATFORM_MAP[p]) for p in platform_choices]
-    exporter = Exporter(output_dir=settings.output_dir)
-    paths = exporter.export(video_path, candidates, formats)
-    return gr.update(visible=True, value=[str(p) for p in paths])
+    return gr.update(visible=True, value=paths if paths else None)
 
 
 # ── UI Layout ────────────────────────────────────────────────────────────────
@@ -319,15 +321,9 @@ with gr.Blocks(title="视频自动剪辑 Agent") as demo:
             interactive=True,
             label="勾选要保留的片段",
         )
-        with gr.Row():
-            platform_select = gr.CheckboxGroup(
-                choices=["抖音", "B站", "YouTube", "微信视频号"],
-                value=["抖音"],
-                label="导出平台",
-            )
-            export_btn = gr.Button("批准并导出", variant="secondary")
+        export_btn = gr.Button("⬇️ 下载选中片段", variant="primary")
         export_files = gr.File(
-            label="下载导出文件",
+            label="下载文件",
             file_count="multiple",
             visible=False,
         )
@@ -381,8 +377,8 @@ with gr.Blocks(title="视频自动剪辑 Agent") as demo:
     )
 
     export_btn.click(
-        fn=export_approved,
-        inputs=[review_table, platform_select, session_state],
+        fn=export_raw,
+        inputs=[review_table, session_state],
         outputs=[export_files],
     )
 
