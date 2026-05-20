@@ -42,11 +42,9 @@ def _toggle(feature: str, current: list[str]):
         new,
         gr.update(variant="primary" if "keyword" in new else "secondary"),
         gr.update(variant="primary" if "speaker" in new else "secondary"),
-        gr.update(variant="primary" if "time" in new else "secondary"),
-        gr.update(variant="primary" if "silence" in new else "secondary"),
         gr.update(variant="primary" if "subtitle" in new else "secondary"),
+        gr.update(variant="primary" if "silence" in new else "secondary"),
         gr.update(visible="keyword" in new),
-        gr.update(visible="time" in new),
         gr.update(value=label),
     )
 
@@ -54,7 +52,6 @@ def _toggle(feature: str, current: list[str]):
 def run_pipeline(
     video_file, selected: list[str],
     kw_text: str, kw_before: float, kw_after: float,
-    t_start: float, t_end: float,
     instruction: str, state: dict,
     progress=gr.Progress(track_tqdm=True),
 ):
@@ -138,8 +135,6 @@ def run_pipeline(
             "kw_text": kw_text,
             "kw_before": kw_before,
             "kw_after": kw_after,
-            "t_start": t_start,
-            "t_end": t_end,
         }
         if srt_path_str:
             new_state["srt_path"] = srt_path_str
@@ -160,7 +155,7 @@ def run_pipeline(
         plan = build_plan_from_buttons(
             selected=non_meta, keywords=keywords,
             keyword_before=kw_before, keyword_after=kw_after,
-            time_start=t_start, time_end=t_end,
+            time_start=None, time_end=None,
             speaker_ids=[],
         )
         yield (
@@ -330,10 +325,8 @@ with gr.Blocks(title="视频自动剪辑 Agent") as demo:
                 btn_keyword = gr.Button("🔍 关键词提取", variant="secondary", size="sm")
                 btn_speaker = gr.Button("🎙 按说话人剪辑", variant="secondary", size="sm")
             with gr.Row():
-                btn_time = gr.Button("⏱ 截取时间段", variant="secondary", size="sm")
-                btn_silence = gr.Button("✂️ 去除静音", variant="secondary", size="sm")
-            with gr.Row():
                 btn_subtitle = gr.Button("📄 导出字幕（SRT）", variant="secondary", size="sm")
+                btn_silence = gr.Button("✂️ 去除静音", variant="secondary", size="sm")
 
             with gr.Group(visible=False) as keyword_params_group:
                 kw_input = gr.Textbox(
@@ -343,11 +336,6 @@ with gr.Blocks(title="视频自动剪辑 Agent") as demo:
                 with gr.Row():
                     kw_before = gr.Number(label="片段前留（秒）", value=3, minimum=0, maximum=60, step=1)
                     kw_after = gr.Number(label="片段后留（秒）", value=5, minimum=0, maximum=60, step=1)
-
-            with gr.Group(visible=False) as time_params_group:
-                with gr.Row():
-                    t_start = gr.Number(label="起始时间（秒）", value=0, minimum=0)
-                    t_end = gr.Number(label="结束时间（秒）", value=60, minimum=0)
 
             gr.Markdown("---")
             instruction_input = gr.Textbox(
@@ -394,8 +382,8 @@ with gr.Blocks(title="视频自动剪辑 Agent") as demo:
 
     _toggle_outputs = [
         selected_features,
-        btn_keyword, btn_speaker, btn_time, btn_silence, btn_subtitle,
-        keyword_params_group, time_params_group,
+        btn_keyword, btn_speaker, btn_subtitle, btn_silence,
+        keyword_params_group,
         start_btn,
     ]
 
@@ -403,12 +391,10 @@ with gr.Blocks(title="视频自动剪辑 Agent") as demo:
                       inputs=[selected_features], outputs=_toggle_outputs)
     btn_speaker.click(fn=lambda s: _toggle("speaker", s),
                       inputs=[selected_features], outputs=_toggle_outputs)
-    btn_time.click(fn=lambda s: _toggle("time", s),
-                   inputs=[selected_features], outputs=_toggle_outputs)
-    btn_silence.click(fn=lambda s: _toggle("silence", s),
-                      inputs=[selected_features], outputs=_toggle_outputs)
     btn_subtitle.click(fn=lambda s: _toggle("subtitle", s),
                        inputs=[selected_features], outputs=_toggle_outputs)
+    btn_silence.click(fn=lambda s: _toggle("silence", s),
+                      inputs=[selected_features], outputs=_toggle_outputs)
 
     _pipeline_outputs = [
         progress_group, speaker_group, results_group,
@@ -424,7 +410,6 @@ with gr.Blocks(title="视频自动剪辑 Agent") as demo:
         inputs=[
             video_input, selected_features,
             kw_input, kw_before, kw_after,
-            t_start, t_end,
             instruction_input, session_state,
         ],
         outputs=_pipeline_outputs,

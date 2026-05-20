@@ -11,8 +11,6 @@ def segments_to_srt(transcript: list[Segment], output_path: Path) -> Path:
         start = _fmt(seg.start)
         end = _fmt(seg.end)
         text = seg.text.strip()
-        if seg.speaker:
-            text = f"[{seg.speaker}] {text}"
         blocks.append(f"{i}\n{start} --> {end}\n{text}")
     output_path.write_text("\n\n".join(blocks) + "\n", encoding="utf-8")
     return output_path
