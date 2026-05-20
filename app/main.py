@@ -16,19 +16,6 @@ from app.pipeline import (
     step_html,
 )
 
-PRICING_HTML = """
-<div style="background:#182818;border:1px solid #2a4a2a;border-radius:6px;
-            padding:10px 12px;font-size:12px;line-height:1.8;color:#aaa;margin-top:4px">
-  <div style="color:#6fa;font-weight:bold">ℹ️ 使用 Claude AI · 产生少量费用</div>
-  <div>10分钟视频 ≈ ¥0.03 &nbsp;·&nbsp; 1小时视频 ≈ ¥0.28</div>
-  <div style="color:#777;margin-top:4px">
-    适合：理解模糊描述（"找情绪激动的片段"）&nbsp;·&nbsp;
-    口语时间（"截取前五分钟"）&nbsp;·&nbsp;
-    去除口误和重复片段
-  </div>
-</div>
-"""
-
 
 def _toggle(feature: str, current: list[str]):
     new = current.copy()
@@ -200,7 +187,10 @@ def run_pipeline(
 
     srt_update = gr.update(visible=True, value=srt_path_str) if srt_path_str else _no_srt
     n_clips = len(candidates)
-    header = f"✅ 找到 **{n_clips}** 个候选片段"
+    if n_clips == 0 and "keyword" in selected and not use_llm:
+        header = "⚠️ 未找到匹配关键词的片段。可以尝试换用「自定义需求」输入框，用 AI 理解模糊描述。"
+    else:
+        header = f"✅ 找到 **{n_clips}** 个候选片段"
     yield (
         gr.update(visible=False), gr.update(visible=False), gr.update(visible=True),
         step_html({1, 2, 3} if use_llm else {1, 3}, 0, skip_llm),
@@ -351,11 +341,10 @@ with gr.Blocks(title="视频自动剪辑 Agent") as demo:
 
             gr.Markdown("---")
             instruction_input = gr.Textbox(
-                label="自定义需求（AI 解析）",
+                label="自定义需求（AI 解析，少量费用）",
                 placeholder="例如：找情绪激动的片段，或截取前五分钟…",
                 lines=2,
             )
-            gr.HTML(PRICING_HTML)
             start_btn = gr.Button("🚀 开始分析", variant="primary")
 
     # ── Region 2: progress (appears after start) ──────────────────────────────
