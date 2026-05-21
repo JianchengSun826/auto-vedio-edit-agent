@@ -111,19 +111,28 @@ def test_candidates_to_rows():
     import uuid
     candidates = [
         CandidateSegment(id=str(uuid.uuid4()), start=2.0, end=8.0,
-                         text_preview="竞品价格很高", confidence_score=0.95, speaker="SPEAKER_00"),
+                         text_preview="竞品价格很高",
+                         text_preview_zh="竞品价格很高",
+                         text_preview_en="Competitor prices are high",
+                         confidence_score=0.95, speaker="SPEAKER_00"),
         CandidateSegment(id=str(uuid.uuid4()), start=15.0, end=22.0,
-                         text_preview="我们更好", confidence_score=0.80, speaker=None),
+                         text_preview="我们更好",
+                         text_preview_zh=None,
+                         text_preview_en=None,
+                         confidence_score=0.80, speaker=None),
     ]
     rows = candidates_to_rows(candidates)
     assert len(rows) == 2
-    assert rows[0][0] == 1          # 序号
-    assert rows[0][1] == "SPEAKER_00"
-    assert rows[0][2] == "2.0s – 8.0s"
-    assert rows[0][3] == "竞品价格很高"
-    assert rows[0][4] == "0.95"
-    assert rows[0][5] is True       # 默认选中
-    assert rows[1][1] == "—"        # 无说话人显示 —
+    assert rows[0][0] == 1                              # col 0: 序号
+    assert rows[0][1] == "SPEAKER_00"                   # col 1: 说话人
+    assert rows[0][2] == "2.0s – 8.0s"                 # col 2: 时间范围
+    assert rows[0][3] == "竞品价格很高"                  # col 3: 中文字幕
+    assert rows[0][4] == "Competitor prices are high"   # col 4: 英文字幕
+    assert rows[0][5] == "0.95"                         # col 5: 置信度
+    assert rows[0][6] is True                           # col 6: 包含 (默认选中)
+    assert rows[1][1] == "—"                            # 无说话人显示 —
+    assert rows[1][3] == "—"                            # None zh → "—"
+    assert rows[1][4] == "—"                            # None en → "—"
 
 
 # ── extract_speakers ─────────────────────────────────────────────────────────
