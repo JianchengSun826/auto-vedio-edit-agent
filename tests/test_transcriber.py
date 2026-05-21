@@ -111,3 +111,31 @@ def test_transcribe_missing_file_raises():
     t = _make_transcriber_no_init()
     with pytest.raises(FileNotFoundError):
         t.transcribe(Path("/nonexistent/video.mp4"))
+
+
+def test_transcribe_passes_language_and_task(tmp_path):
+    """Verify language and task kwargs are forwarded to the underlying model."""
+    import sys
+    import types
+
+    # Build a fake whisperx module so the lazy `import whisperx` inside
+    # _transcribe_single_whisperx resolves without needing the real package.
+    fake_wx = types.ModuleType("whisperx")
+    fake_wx.load_audio = MagicMock(return_value=MagicMock())
+    align_result = MagicMock()
+    align_result.__getitem__ = lambda self, key: MOCK_ALIGN_RESULT[key]
+    fake_wx.load_align_model = MagicMock(return_value=(MagicMock(), MagicMock()))
+    fake_wx.align = MagicMock(return_value=MOCK_ALIGN_RESULT)
+
+    with patch.dict(sys.modules, {"whisperx": fake_wx}):
+        t = _make_transcriber_no_init()
+        t._backend = "whisperx"
+        t._model.transcribe.return_value = MOCK_TRANSCRIBE_RESULT
+
+        fake_video = tmp_path / "video.mp4"
+        fake_video.write_bytes(b"fake")
+
+        t.transcribe(fake_video, language="zh", task="transcribe")
+
+    call_kwargs = t._model.transcribe.call_args
+    assert call_kwargs.kwargs.get("language") == "zh" or "zh" in str(call_kwargs)
