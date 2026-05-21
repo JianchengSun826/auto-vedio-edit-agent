@@ -272,32 +272,29 @@ class Transcriber:
         import logging
         _log = logging.getLogger(__name__)
 
-        _zh: dict = {}
-        _en: dict = {}
-
-        def _run_zh():
+        def _run_zh() -> list[Segment]:
             try:
-                _zh["segs"] = self.transcribe(video_path, diarize=diarize,
-                                               language="zh", task="transcribe")
+                return self.transcribe(video_path, diarize=diarize,
+                                       language="zh", task="transcribe")
             except Exception as exc:
                 _log.warning("中文转录失败: %s", exc)
-                _zh["segs"] = []
+                return []
 
-        def _run_en():
+        def _run_en() -> list[Segment]:
             try:
-                _en["segs"] = self.transcribe(video_path, diarize=diarize,
-                                               language=None, task="translate")
+                return self.transcribe(video_path, diarize=diarize,
+                                       language=None, task="translate")
             except Exception as exc:
                 _log.warning("英文转录失败: %s", exc)
-                _en["segs"] = []
+                return []
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             fzh = pool.submit(_run_zh)
             fen = pool.submit(_run_en)
-            fzh.result()
-            fen.result()
+            zh_segs = fzh.result()
+            en_segs = fen.result()
 
-        return _merge_bilingual(_zh["segs"], _en["segs"])
+        return _merge_bilingual(zh_segs, en_segs)
 
     def _get_duration(self, video_path: Path) -> Optional[float]:
         import subprocess
