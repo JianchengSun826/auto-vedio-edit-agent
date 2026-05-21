@@ -47,6 +47,8 @@ class RuleEngine:
                     start=start,
                     end=end,
                     text_preview=seg.text,
+                    text_preview_zh=seg.text_zh,
+                    text_preview_en=seg.text_en,
                     confidence_score=1.0,
                     speaker=seg.speaker,
                 ))
@@ -61,6 +63,8 @@ class RuleEngine:
                     start=max(0.0, seg.start - rule.padding_before_sec),
                     end=seg.end + rule.padding_after_sec,
                     text_preview=seg.text,
+                    text_preview_zh=seg.text_zh,
+                    text_preview_en=seg.text_en,
                     confidence_score=1.0,
                     speaker=seg.speaker,
                 ))

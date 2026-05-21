@@ -128,3 +128,21 @@ def test_keyword_match_carries_speaker():
     # Both segments containing "竞品" should carry their speaker label
     speakers = {c.speaker for c in candidates}
     assert "SPEAKER_01" in speakers
+
+
+TRANSCRIPT_BILINGUAL = [
+    Segment(start=0.0, end=5.0, text="竞品分析", text_zh="竞品分析", text_en="Competitor analysis"),
+    Segment(start=5.0, end=12.0, text="价格对比", text_zh="价格对比", text_en="Price comparison"),
+]
+
+def test_keyword_match_preserves_bilingual_preview():
+    engine = RuleEngine()
+    plan = EditPlan(
+        mode=EditMode.HIGHLIGHT_EXTRACTION,
+        rules=[Rule(type=RuleType.KEYWORD_MATCH, keywords=["竞品"], padding_before_sec=0, padding_after_sec=0)],
+        output_formats=[],
+    )
+    candidates = engine.execute(plan, TRANSCRIPT_BILINGUAL, video_path=None)
+    assert len(candidates) == 1
+    assert candidates[0].text_preview_zh == "竞品分析"
+    assert candidates[0].text_preview_en == "Competitor analysis"
