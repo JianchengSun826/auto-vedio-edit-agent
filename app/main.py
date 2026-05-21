@@ -20,6 +20,13 @@ from app.pipeline import (
 _transcriber = Transcriber()
 
 
+def _fmt_t(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    m, s = int(seconds) // 60, int(seconds) % 60
+    return f"{m}m {s:02d}s"
+
+
 def _toggle(feature: str, current: list[str]):
     new = current.copy()
     if feature in new:
@@ -80,13 +87,31 @@ def run_pipeline(
     # Step 1: Transcribe in a background thread so we can yield heartbeats and
     # keep the WebSocket alive during long videos (otherwise Gradio disconnects).
     import threading
+    import queue as _queue
+    import logging as _logging
+    import time as _time
     progress(0.1)
+    _t_pipeline = _time.time()
     video_path = Path(video_file)
     _result: dict = {}
 
+    # Capture log messages from the transcriber thread
+    _log_q: _queue.SimpleQueue = _queue.SimpleQueue()
+
+    class _QHandler(_logging.Handler):
+        def emit(self, record):
+            try:
+                _log_q.put_nowait(self.format(record))
+            except Exception:
+                pass
+
+    _qh = _QHandler()
+    _qh.setFormatter(_logging.Formatter("[%(asctime)s] %(message)s", datefmt="%H:%M:%S"))
+    _logging.getLogger("processing.transcriber").addHandler(_qh)
+
     def _do_transcribe():
         try:
-            _result["transcript"] = _transcriber.transcribe(
+            _result["transcript"] = _transcriber.transcribe_bilingual(
                 video_path, diarize="speaker" in selected
             )
         except Exception as exc:
@@ -94,13 +119,25 @@ def run_pipeline(
 
     t = threading.Thread(target=_do_transcribe, daemon=True)
     t.start()
+    _t_transcribe = _time.time()
+    _tick = 0
+    _dots = ["·", "··", "···"]
+    _log_lines: list[str] = []
     while t.is_alive():
         t.join(timeout=5)
+        while not _log_q.empty():
+            _log_lines.append(_log_q.get_nowait())
         if t.is_alive():
+            _tick += 1
+            _elapsed = _fmt_t(_time.time() - _t_transcribe)
+            recent = "\n".join(f"`{l}`" for l in _log_lines[-6:])
+            status = f"正在双语转录（zh + en）{_dots[_tick % 3]}  ⏱ {_elapsed}\n\n{recent}" if recent else f"正在双语转录（zh + en）{_dots[_tick % 3]}  ⏱ {_elapsed}"
             yield (
                 gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
-                step_html(set(), 1, skip_llm), "正在转录音频…", gr.update(), "", [], _no_srt, state,
+                step_html(set(), 1, skip_llm), status, gr.update(), "", [], _no_srt, state,
             )
+
+    _logging.getLogger("processing.transcriber").removeHandler(_qh)
 
     if "error" in _result:
         raise _result["error"]
@@ -111,21 +148,24 @@ def run_pipeline(
     except Exception:
         duration = None
 
+    _t_transcribe_done = _time.time() - _t_transcribe
     yield (
         gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
         step_html({1}, 2, skip_llm),
-        f"✓ 转录完成，共 {len(transcript)} 个片段",
+        f"✓ 转录完成，共 {len(transcript)} 个片段（转录耗时 {_fmt_t(_t_transcribe_done)}）",
         gr.update(), "", [], _no_srt, state,
     )
 
     # Generate SRT if subtitle extraction requested
-    srt_path_str: str | None = None
+    srt_paths: list[str] = []
     if "subtitle" in selected:
         output_dir = Path(settings.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        srt_file = output_dir / f"{video_path.stem}.srt"
-        segments_to_srt(transcript, srt_file)
-        srt_path_str = str(srt_file)
+        srt_zh = output_dir / f"{video_path.stem}_zh.srt"
+        srt_en = output_dir / f"{video_path.stem}_en.srt"
+        segments_to_srt(transcript, srt_zh, lang="zh")
+        segments_to_srt(transcript, srt_en, lang="en")
+        srt_paths = [str(srt_zh), str(srt_en)]
 
     # Speaker mode: stop and show selector
     if "speaker" in selected:
@@ -143,7 +183,7 @@ def run_pipeline(
                 step_html({1}, 2, False), msg, gr.update(), "", [], _no_srt, state,
             )
             return
-        srt_update = gr.update(visible=True, value=srt_path_str) if srt_path_str else _no_srt
+        srt_update = gr.update(visible=True, value=srt_paths) if srt_paths else _no_srt
         new_state = {
             **state,
             "transcript": [s.model_dump() for s in transcript],
@@ -154,8 +194,8 @@ def run_pipeline(
             "kw_before": kw_before,
             "kw_after": kw_after,
         }
-        if srt_path_str:
-            new_state["srt_path"] = srt_path_str
+        if srt_paths:
+            new_state["srt_path"] = srt_paths
         yield (
             gr.update(visible=True), gr.update(visible=True), gr.update(visible=False),
             step_html({1}, 2, False),
@@ -193,15 +233,17 @@ def run_pipeline(
             gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
             step_html({1}, 2, False), "正在调用 AI 解析意图…", gr.update(), "", [], _no_srt, state,
         )
+        _t_llm = _time.time()
         parser = IntentParser()
         plan = parser.parse(
             user_instruction=instruction,
             transcript=[s.model_dump() for s in transcript],
         )
+        _t_llm_done = _fmt_t(_time.time() - _t_llm)
         progress(0.8)
         yield (
             gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
-            step_html({1, 2}, 3, False), "正在执行规则…", gr.update(), "", [], _no_srt, state,
+            step_html({1, 2}, 3, False), f"正在执行规则…（AI 解析耗时 {_t_llm_done}）", gr.update(), "", [], _no_srt, state,
         )
 
     engine = RuleEngine()
@@ -213,10 +255,11 @@ def run_pipeline(
         "candidates": [c.model_dump() for c in candidates],
         "video_path": str(video_path),
     }
-    if srt_path_str:
-        new_state["srt_path"] = srt_path_str
+    if srt_paths:
+        new_state["srt_path"] = srt_paths
 
-    srt_update = gr.update(visible=True, value=srt_path_str) if srt_path_str else _no_srt
+    srt_update = gr.update(visible=True, value=srt_paths) if srt_paths else _no_srt
+    _t_total = _fmt_t(_time.time() - _t_pipeline)
     n_clips = len(candidates)
     if n_clips == 0 and "keyword" in selected and not use_llm:
         header = "⚠️ 未找到匹配关键词的片段。可以尝试换用「自定义需求」输入框，用 AI 理解模糊描述。"
@@ -225,7 +268,7 @@ def run_pipeline(
     yield (
         gr.update(visible=False), gr.update(visible=False), gr.update(visible=True),
         step_html({1, 2, 3} if use_llm else {1, 3}, 0, skip_llm),
-        "完成",
+        f"完成  ⏱ 总耗时 {_t_total}",
         gr.update(),
         header,
         candidates_to_rows(candidates),
@@ -243,9 +286,10 @@ def confirm_speaker(
                      step_bar, status, results_header, review_table, srt_download, state)
     """
     _no_srt = gr.update(visible=False, value=None)
+    _srt_paths = state.get("srt_path", [])
     srt_update = (
-        gr.update(visible=True, value=state["srt_path"])
-        if "srt_path" in state and Path(state["srt_path"]).exists()
+        gr.update(visible=True, value=_srt_paths)
+        if _srt_paths and all(Path(p).exists() for p in _srt_paths)
         else _no_srt
     )
 
@@ -312,7 +356,7 @@ def export_raw(review_table, state: dict):
     approved_indices: set[int] = set()
     for row in rows:
         try:
-            if row[5]:
+            if row[6]:
                 approved_indices.add(int(row[0]) - 1)
         except (TypeError, ValueError, IndexError):
             pass
@@ -397,14 +441,14 @@ with gr.Blocks(title="视频自动剪辑 Agent") as demo:
     with gr.Group(visible=False) as results_group:
         results_header = gr.Markdown()
         review_table = gr.Dataframe(
-            headers=["序号", "说话人", "时间范围", "内容预览", "置信度", "包含"],
-            datatype=["number", "str", "str", "str", "str", "bool"],
+            headers=["序号", "说话人", "时间范围", "中文字幕", "英文字幕", "置信度", "包含"],
+            datatype=["number", "str", "str", "str", "str", "str", "bool"],
             interactive=True,
             label="勾选要保留的片段",
         )
         srt_download = gr.File(
             label="📄 字幕文件（SRT）",
-            file_count="single",
+            file_count="multiple",
             visible=False,
         )
         export_btn = gr.Button("⬇️ 下载选中片段", variant="primary")
@@ -475,5 +519,4 @@ if __name__ == "__main__":
     demo.launch(
         server_name="0.0.0.0",
         allowed_paths=[str(Path(settings.output_dir).resolve())],
-        max_file_size="10gb",
     )
