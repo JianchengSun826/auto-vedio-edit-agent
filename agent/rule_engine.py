@@ -103,6 +103,8 @@ class RuleEngine:
                         start=cursor,
                         end=s_start,
                         text_preview=seg.text_preview,
+                        text_preview_zh=seg.text_preview_zh,
+                        text_preview_en=seg.text_preview_en,
                         confidence_score=seg.confidence_score,
                     ))
                 cursor = max(cursor, s_end)
@@ -112,6 +114,8 @@ class RuleEngine:
                     start=cursor,
                     end=seg.end,
                     text_preview=seg.text_preview,
+                    text_preview_zh=seg.text_preview_zh,
+                    text_preview_en=seg.text_preview_en,
                     confidence_score=seg.confidence_score,
                 ))
         return result if result else candidates
@@ -132,6 +136,14 @@ class RuleEngine:
                     start=last.start,
                     end=max(last.end, current.end),
                     text_preview=f"{last.text_preview} | {current.text_preview}",
+                    text_preview_zh=(
+                        f"{last.text_preview_zh} | {current.text_preview_zh}"
+                        if last.text_preview_zh or current.text_preview_zh else None
+                    ),
+                    text_preview_en=(
+                        f"{last.text_preview_en} | {current.text_preview_en}"
+                        if last.text_preview_en or current.text_preview_en else None
+                    ),
                     confidence_score=max(last.confidence_score, current.confidence_score),
                     speaker=last.speaker if last.speaker == current.speaker else None,
                 )
