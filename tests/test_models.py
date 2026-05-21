@@ -70,3 +70,29 @@ def test_rule_has_speakers_field():
 
     rule_with_speakers = Rule(type=RuleType.SPEAKER_FILTER, speakers=["SPEAKER_00"])
     assert rule_with_speakers.speakers == ["SPEAKER_00"]
+
+
+def test_segment_bilingual_fields():
+    seg = Segment(start=0.0, end=3.0, text="你好", text_zh="你好", text_en="Hello")
+    assert seg.text_zh == "你好"
+    assert seg.text_en == "Hello"
+
+def test_segment_bilingual_defaults_none():
+    seg = Segment(start=0.0, end=3.0, text="hello")
+    assert seg.text_zh is None
+    assert seg.text_en is None
+
+def test_candidate_segment_bilingual_fields():
+    from models.edit_plan import CandidateSegment
+    c = CandidateSegment(
+        id="1", start=0.0, end=3.0, text_preview="hello",
+        text_preview_zh="你好", text_preview_en="Hello",
+    )
+    assert c.text_preview_zh == "你好"
+    assert c.text_preview_en == "Hello"
+
+def test_candidate_segment_bilingual_defaults_none():
+    from models.edit_plan import CandidateSegment
+    c = CandidateSegment(id="1", start=0.0, end=3.0, text_preview="hello")
+    assert c.text_preview_zh is None
+    assert c.text_preview_en is None

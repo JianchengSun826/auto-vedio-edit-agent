@@ -76,6 +76,8 @@ class Segment(BaseModel):
     start: float
     end: float
     text: str
+    text_zh: Optional[str] = None
+    text_en: Optional[str] = None
     speaker: Optional[str] = None
 
 
@@ -85,7 +87,9 @@ class CandidateSegment(BaseModel):
     start: float
     end: float
     text_preview: str
+    text_preview_zh: Optional[str] = None
+    text_preview_en: Optional[str] = None
     confidence_score: float = 1.0
     included: bool = True
-    source_file: Optional[str] = None   # for material assembly mode
+    source_file: Optional[str] = None
     speaker: Optional[str] = None
