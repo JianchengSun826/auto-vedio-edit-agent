@@ -163,3 +163,38 @@ def test_step_html_skip_llm_grays_step2():
     # When skip_llm=True, step 2 should show the "—" suffix
     html = step_html(done={1}, active=3, skip_llm=True)
     assert " —" in html
+
+
+from models.edit_plan import CandidateSegment
+
+def test_candidates_to_rows_has_two_text_columns():
+    from app.pipeline import candidates_to_rows
+    candidates = [
+        CandidateSegment(
+            id="1", start=0.0, end=5.0,
+            text_preview="text", text_preview_zh="中文字幕", text_preview_en="English subtitle",
+            confidence_score=0.9,
+        )
+    ]
+    rows = candidates_to_rows(candidates)
+    assert len(rows) == 1
+    row = rows[0]
+    # columns: 序号, 说话人, 时间范围, 中文字幕, 英文字幕, 置信度, 包含
+    assert len(row) == 7
+    assert row[3] == "中文字幕"
+    assert row[4] == "English subtitle"
+
+def test_candidates_to_rows_truncates_long_text():
+    from app.pipeline import candidates_to_rows
+    long_zh = "中" * 100
+    long_en = "A" * 100
+    candidates = [
+        CandidateSegment(
+            id="1", start=0.0, end=5.0,
+            text_preview="x", text_preview_zh=long_zh, text_preview_en=long_en,
+            confidence_score=1.0,
+        )
+    ]
+    rows = candidates_to_rows(candidates)
+    assert len(rows[0][3]) <= 81  # 77 chars + "…" + some margin
+    assert rows[0][3].endswith("…")
