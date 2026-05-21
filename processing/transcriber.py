@@ -266,6 +266,39 @@ class Transcriber:
                 chunk_index += 1
         return all_segments
 
+    def transcribe_bilingual(self, video_path: Path, diarize: bool = False) -> list[Segment]:
+        """Run two Whisper passes in parallel and merge into bilingual segments."""
+        from concurrent.futures import ThreadPoolExecutor
+        import logging
+        _log = logging.getLogger(__name__)
+
+        _zh: dict = {}
+        _en: dict = {}
+
+        def _run_zh():
+            try:
+                _zh["segs"] = self.transcribe(video_path, diarize=diarize,
+                                               language="zh", task="transcribe")
+            except Exception as exc:
+                _log.warning("中文转录失败: %s", exc)
+                _zh["segs"] = []
+
+        def _run_en():
+            try:
+                _en["segs"] = self.transcribe(video_path, diarize=diarize,
+                                               language=None, task="translate")
+            except Exception as exc:
+                _log.warning("英文转录失败: %s", exc)
+                _en["segs"] = []
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            fzh = pool.submit(_run_zh)
+            fen = pool.submit(_run_en)
+            fzh.result()
+            fen.result()
+
+        return _merge_bilingual(_zh["segs"], _en["segs"])
+
     def _get_duration(self, video_path: Path) -> Optional[float]:
         import subprocess
         import re
@@ -279,3 +312,43 @@ class Transcriber:
             return float(match.group(1)) if match else None
         except Exception:
             return None
+
+
+def _merge_bilingual(zh_segs: list[Segment], en_segs: list[Segment]) -> list[Segment]:
+    """Merge zh and en segment lists into bilingual Segment objects."""
+    if not zh_segs and not en_segs:
+        return []
+
+    # Happy path: same count → index merge
+    if len(zh_segs) == len(en_segs):
+        return [
+            Segment(
+                start=zh.start, end=zh.end,
+                text=zh.text,
+                text_zh=zh.text,
+                text_en=en.text,
+                speaker=zh.speaker,
+            )
+            for zh, en in zip(zh_segs, en_segs)
+        ]
+
+    # Fallback: use zh as base, match en by midpoint proximity
+    import logging
+    logging.getLogger(__name__).warning(
+        "Bilingual segment count mismatch zh=%d en=%d, using time-based matching",
+        len(zh_segs), len(en_segs),
+    )
+    base = zh_segs or en_segs
+    other = en_segs if zh_segs else []
+    result = []
+    for seg in base:
+        mid = (seg.start + seg.end) / 2
+        best = min(other, key=lambda s: abs((s.start + s.end) / 2 - mid), default=None)
+        result.append(Segment(
+            start=seg.start, end=seg.end,
+            text=seg.text,
+            text_zh=seg.text if zh_segs else None,
+            text_en=best.text if best else None,
+            speaker=seg.speaker,
+        ))
+    return result

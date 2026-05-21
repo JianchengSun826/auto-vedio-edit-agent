@@ -139,3 +139,58 @@ def test_transcribe_passes_language_and_task(tmp_path):
 
     call_kwargs = t._model.transcribe.call_args
     assert call_kwargs.kwargs.get("language") == "zh" or "zh" in str(call_kwargs)
+
+
+def test_transcribe_bilingual_merges_zh_and_en():
+    t = _make_transcriber_no_init()
+    t._backend = "whisperx"
+
+    zh_segs = [
+        Segment(start=0.0, end=3.5, text="你好世界"),
+        Segment(start=3.5, end=7.0, text="这是测试"),
+    ]
+    en_segs = [
+        Segment(start=0.0, end=3.5, text="Hello world"),
+        Segment(start=3.5, end=7.0, text="This is a test"),
+    ]
+
+    call_count = {"n": 0}
+    def fake_transcribe(video_path, diarize=False, language=None, task="transcribe"):
+        call_count["n"] += 1
+        return zh_segs if language == "zh" else en_segs
+
+    t.transcribe = fake_transcribe
+
+    fake_video = Path("/tmp/fake.mp4")
+    with patch.object(Path, "exists", return_value=True):
+        result = t.transcribe_bilingual(fake_video)
+
+    assert len(result) == 2
+    assert result[0].text_zh == "你好世界"
+    assert result[0].text_en == "Hello world"
+    assert result[1].text_zh == "这是测试"
+    assert result[1].text_en == "This is a test"
+    assert result[0].text == "你好世界"
+
+
+def test_transcribe_bilingual_handles_count_mismatch():
+    t = _make_transcriber_no_init()
+    t._backend = "whisperx"
+
+    zh_segs = [Segment(start=0.0, end=4.0, text="片段一")]
+    en_segs = [
+        Segment(start=0.0, end=2.0, text="Part one"),
+        Segment(start=2.0, end=4.0, text="Part two"),
+    ]
+
+    def fake_transcribe(video_path, diarize=False, language=None, task="transcribe"):
+        return zh_segs if language == "zh" else en_segs
+
+    t.transcribe = fake_transcribe
+
+    with patch.object(Path, "exists", return_value=True):
+        result = t.transcribe_bilingual(Path("/tmp/fake.mp4"))
+
+    assert len(result) == 1
+    assert result[0].text_zh == "片段一"
+    assert result[0].text_en is not None
